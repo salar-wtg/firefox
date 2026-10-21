@@ -5837,7 +5837,11 @@
 
 - name: dom.vibrator.enabled
   type: bool
+#if defined(MOZ_WIDGET_ANDROID)
+  value: true
+#else
   value: false
+#endif
   mirror: always
 
 - name: dom.vibrator.max_vibrate_ms
@@ -5847,7 +5851,7 @@
 
 - name: dom.vibrator.max_vibrate_list_len
   type: RelaxedAtomicUint32
-  value: 128
+  value: 99
   mirror: always
 
 - name: dom.viewTransitions.cross-document.enabled

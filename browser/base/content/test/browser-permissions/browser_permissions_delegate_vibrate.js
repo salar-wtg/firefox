@@ -35,6 +35,7 @@ add_task(async function testNoPermissionPrompt() {
       });
 
       await content.SpecialPowers.spawn(frame, [], async function () {
+        content.document.notifyUserGestureActivation();
         // Request a permission.
         let result = this.content.navigator.vibrate([100, 100]);
         Assert.equal(result, false, "navigator.vibrate has been denied");

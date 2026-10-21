@@ -12,7 +12,7 @@
 
 <script class="testbody" type="text/javascript">
 function testNavigatorVibrate(testCase) {
-  result = navigator.vibrate(testCase.value);
+  const result = navigator.vibrate(testCase.value);
   is(result, true, `vibrate(${testCase.value}) must succeed.`);
 }
 
@@ -44,10 +44,10 @@ const TESTCASES = [
   },{
     // -1 will be converted to the highest unsigned long then clamped.
     value: [100, -1],
-    expected: [100, MAX_VIBRATE_MS],
+    expected: [100],
   },{
     value: [100, 'a'],
-    expected: [100, 0],
+    expected: [100],
   },{
     // If we pass a vibration pattern with a value higher than max_vibrate_ms or a
     // pattern longer than max_vibrate_list_len, the call should succeed but the
@@ -83,13 +83,13 @@ const TESTCASES = [
     expected: [0, 0, 0],
   },{
     value: ['1000', 1000],
-    expected: [1000, 1000],
+    expected: [1000],
   },{
     value: [1000, 1000],
-    expected: [1000, 1000],
+    expected: [1000],
   },{
     value: [1000, 1000.1],
-    expected: [1000, 1000],
+    expected: [1000],
   }
 ];
 
@@ -109,6 +109,7 @@ add_task(async function test_vibrator_vibrate() {
   await SpecialPowers.pushPermissions([{type: 'vibration', allow: true, context: document}]);
   await SpecialPowers.pushPrefEnv({"set": [['dom.vibrator.enabled', true]]});
 
+  SpecialPowers.wrap(document).notifyUserGestureActivation();
   testWith(testNavigatorVibrate);
 
   await SpecialPowers.pushPrefEnv({"set": [['dom.vibrator.enabled', false]]});
@@ -116,10 +117,45 @@ add_task(async function test_vibrator_vibrate() {
   testWith(testNavigatorVibrate);
 });
 
+add_task(async function test_vibrate_without_activation() {
+  await SpecialPowers.pushPermissions([{type: 'vibration', allow: true, context: document}]);
+  await SpecialPowers.pushPrefEnv({"set": [['dom.vibrator.enabled', true]]});
+  SpecialPowers.wrap(document).clearUserGestureActivation();
+
+  is(navigator.vibrate(100), false, "Starting vibration requires user activation.");
+  for (const pattern of [0, [], [0, 0], [0, 0, 0]]) {
+    is(navigator.vibrate(pattern), true, "Cancelling vibration does not require user activation.");
+  }
+});
+
+add_task(async function test_vibrate_without_permission_prompt() {
+  await SpecialPowers.pushPermissions([{type: 'vibration', remove: true, context: document}]);
+  await SpecialPowers.pushPrefEnv({"set": [['dom.vibrator.enabled', true]]});
+  SpecialPowers.wrap(document).notifyUserGestureActivation();
+
+  const observer = () => ok(false, "Vibration must not request a permission prompt.");
+  SpecialPowers.addObserver(observer, "Vibration:Request");
+  try {
+    is(navigator.vibrate(100), true, "User activation allows vibration without a permission prompt.");
+    navigator.vibrate(0);
+  } finally {
+    SpecialPowers.removeObserver(observer, "Vibration:Request");
+  }
+});
+
+add_task(async function test_vibrate_denied() {
+  await SpecialPowers.pushPermissions([{type: 'vibration', allow: false, context: document}]);
+  await SpecialPowers.pushPrefEnv({"set": [['dom.vibrator.enabled', true]]});
+  SpecialPowers.wrap(document).notifyUserGestureActivation();
+
+  is(navigator.vibrate(100), false, "Denied vibration remains blocked after user activation.");
+});
+
 add_task(async function test_vibrate_many_times() {
   await SpecialPowers.pushPermissions([{type: 'vibration', allow: true, context: document}]);
   await SpecialPowers.pushPrefEnv({"set": [['dom.vibrator.enabled', true]]});
 
+  SpecialPowers.wrap(document).notifyUserGestureActivation();
  // The following loop shouldn't cause us to crash.  See bug 701716.
  for (var i = 0; i < 10000; i++) {
    navigator.vibrate([100, 100]);

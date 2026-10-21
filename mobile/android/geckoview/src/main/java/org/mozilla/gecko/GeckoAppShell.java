@@ -40,7 +40,9 @@ import android.os.Debug;
 import android.os.LocaleList;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.VibrationEffect;
 import android.os.Vibrator;
+import android.os.VibratorManager;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -726,15 +728,26 @@ public class GeckoAppShell {
   }
 
   private static Vibrator vibrator() {
-    return (Vibrator) getApplicationContext().getSystemService(Context.VIBRATOR_SERVICE);
+    final Context context = getApplicationContext();
+    if (Build.VERSION.SDK_INT >= 31) {
+      final VibratorManager manager =
+          (VibratorManager) context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
+      return manager != null ? manager.getDefaultVibrator() : null;
+    }
+    return (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
   }
 
   @SuppressLint("MissingPermission")
   @WrapForJNI(calledFrom = "gecko")
   private static void vibrate(final long milliseconds) {
-    sVibrationEndTime = System.nanoTime() + milliseconds * 1000000;
     try {
-      vibrator().vibrate(milliseconds);
+      final Vibrator vibrator = vibrator();
+      if (vibrator == null || !vibrator.hasVibrator()) {
+        return;
+      }
+      sVibrationEndTime = System.nanoTime() + milliseconds * 1000000;
+      vibrator.vibrate(
+          VibrationEffect.createOneShot(milliseconds, VibrationEffect.DEFAULT_AMPLITUDE));
     } catch (final SecurityException ignore) {
       Log.w(LOGTAG, "No VIBRATE permission");
     }
@@ -751,9 +764,13 @@ public class GeckoAppShell {
       vibrationDuration += pattern[i];
     }
 
-    sVibrationEndTime = System.nanoTime() + vibrationDuration * 1000000;
     try {
-      vibrator().vibrate(pattern, repeat);
+      final Vibrator vibrator = vibrator();
+      if (vibrator == null || !vibrator.hasVibrator()) {
+        return;
+      }
+      sVibrationEndTime = System.nanoTime() + vibrationDuration * 1000000;
+      vibrator.vibrate(VibrationEffect.createWaveform(pattern, repeat));
     } catch (final SecurityException ignore) {
       Log.w(LOGTAG, "No VIBRATE permission");
     }
@@ -764,7 +781,11 @@ public class GeckoAppShell {
   private static void cancelVibrate() {
     sVibrationEndTime = 0;
     try {
-      vibrator().cancel();
+      final Vibrator vibrator = vibrator();
+      if (vibrator == null || !vibrator.hasVibrator()) {
+        return;
+      }
+      vibrator.cancel();
     } catch (final SecurityException ignore) {
       Log.w(LOGTAG, "No VIBRATE permission");
     }
