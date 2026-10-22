@@ -729,7 +729,7 @@ public class GeckoAppShell {
 
   private static Vibrator vibrator() {
     final Context context = getApplicationContext();
-    if (Build.VERSION.SDK_INT >= 31) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
       final VibratorManager manager =
           (VibratorManager) context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
       return manager != null ? manager.getDefaultVibrator() : null;
