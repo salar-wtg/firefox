@@ -827,6 +827,11 @@ nsTArray<uint32_t> SanitizeVibratePattern(const nsTArray<uint32_t>& aPattern) {
         std::min(StaticPrefs::dom_vibrator_max_vibrate_ms(), pattern[i]);
   }
 
+  // Validate and normalize: a final pause has no effect.
+  if (!pattern.IsEmpty() && pattern.Length() % 2 == 0) {
+    pattern.RemoveLastElement();
+  }
+
   return pattern;
 }
 
@@ -845,8 +850,16 @@ bool Navigator::Vibrate(const nsTArray<uint32_t>& aPattern) {
 
   nsTArray<uint32_t> pattern = SanitizeVibratePattern(aPattern);
 
-  mRequestedVibrationPattern = std::move(pattern);
+  // Perform vibration, step 1: require sticky activation for every call.
+  if (!doc->HasBeenUserGestureActivated()) {
+    nsContentUtils::ReportToConsoleNonLocalized(
+        u"Blocked call to navigator.vibrate because user hasn't tapped on "
+        u"the frame or any embedded frame yet."_ns,
+        nsIScriptError::warningFlag, "DOM"_ns, doc);
+    return false;
+  }
 
+  // Perform vibration, step 2: respect permission denials.
   PermissionDelegateHandler* permissionHandler =
       doc->GetPermissionDelegateHandler();
   if (NS_WARN_IF(!permissionHandler)) {
@@ -859,28 +872,11 @@ bool Navigator::Vibrate(const nsTArray<uint32_t>& aPattern) {
                                    false);
 
   if (permission == nsIPermissionManager::DENY_ACTION) {
-    // Abort without observer service or on denied session permission.
-    SetVibrationPermission(false /* permitted */, false /* persistent */);
     return false;
   }
 
-  if (permission == nsIPermissionManager::ALLOW_ACTION ||
-      mRequestedVibrationPattern.IsEmpty() ||
-      (mRequestedVibrationPattern.Length() == 1 &&
-       mRequestedVibrationPattern[0] == 0)) {
-    // Always allow cancelling vibration and respect session permissions.
-    SetVibrationPermission(true /* permitted */, false /* persistent */);
-    return true;
-  }
-
-  // Request user permission.
-  nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
-  if (!obs) {
-    return true;
-  }
-
-  obs->NotifyObservers(ToSupports(this), "Vibration:Request", nullptr);
-
+  mRequestedVibrationPattern = std::move(pattern);
+  SetVibrationPermission(true /* permitted */, false /* persistent */);
   return true;
 }
 
