@@ -81,7 +81,8 @@ android {
     def releaseTemplate = {
         // We allow disabling optimization by passing `-PdisableOptimization` to gradle. This is used
         // in automation for UI testing non-debug builds.
-        shrinkResources = !project.hasProperty("disableOptimization")
+        def isUiTestBuildType = project.findProperty("testBuildType") == it.name
+        shrinkResources = !project.hasProperty("disableOptimization") && !isUiTestBuildType
         minifyEnabled = !project.hasProperty("disableOptimization")
         proguardFiles = [getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro']
         testProguardFiles 'proguard-rules-android-test.pro'
@@ -476,6 +477,7 @@ dependencies {
     implementation project(':components:compose-base')
     implementation project(':components:compose-browser-toolbar')
     implementation project(':components:compose-cfr')
+    implementation project(':components:compose-draggable')
     implementation project(':components:compose-menu')
     implementation project(':components:concept-awesomebar')
     implementation project(':components:concept-base')

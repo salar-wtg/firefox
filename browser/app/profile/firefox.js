@@ -518,6 +518,8 @@ pref("browser.urlbar.trustPanel.breachAlerts", true);
 
 // Whether or not Unified Search Button is shown always.
 pref("browser.urlbar.unifiedSearchButton.always", false);
+// Whether or not history is shown when in search mode.
+pref("browser.urlbar.unifiedSearchButton.historyInSearchMode", false);
 
 // Enable trending suggestions and recent searches.
 pref("browser.urlbar.trending.featureGate", true);
@@ -605,30 +607,6 @@ pref("browser.urlbar.quicksuggest.online.available", false);
 // [3] browser.urlbar.merino.ohttpConfigURL
 // [4] browser.urlbar.merino.ohttpRelayURL
 pref("browser.urlbar.quicksuggest.online.enabled", true, sticky);
-
-// Whether the Firefox Suggest contextual opt-in result is enabled.
-pref("browser.urlbar.quicksuggest.contextualOptIn", false);
-
-// Number that the user dismissed the Firefox Suggest contextual opt-in result.
-pref("browser.urlbar.quicksuggest.contextualOptIn.dismissedCount", 0);
-
-// Period until reshow the Firefox Suggest contextual opt-in result when first dismissed.
-pref("browser.urlbar.quicksuggest.contextualOptIn.firstReshowAfterPeriodDays", 7);
-
-// Period until reshow the Firefox Suggest contextual opt-in result when second dismissed.
-pref("browser.urlbar.quicksuggest.contextualOptIn.secondReshowAfterPeriodDays", 14);
-
-// Period until reshow the Firefox Suggest contextual opt-in result when third dismissed.
-pref("browser.urlbar.quicksuggest.contextualOptIn.thirdReshowAfterPeriodDays", 60);
-
-// Number of impression for the Firefox Suggest contextual opt-in result.
-pref("browser.urlbar.quicksuggest.contextualOptIn.impressionCount", 0);
-
-// Limit for impression to dismiss the Firefox Suggest contextual opt-in result.
-pref("browser.urlbar.quicksuggest.contextualOptIn.impressionLimit", 20);
-
-// Days until dismiss the Firefox Suggest contextual opt-in result after first impression.
-pref("browser.urlbar.quicksuggest.contextualOptIn.impressionDaysLimit", 5);
 
 // Whether the quick suggest feature in the urlbar is enabled.
 pref("browser.urlbar.quicksuggest.enabled", false);
@@ -2455,7 +2433,7 @@ pref("browser.smartwindow.memoriesLogLevel", "Warn");
 // Gates resume-activity ("pick up where you left off") starter generation.
 pref("browser.smartwindow.resumeActivity.enabled", true);
 // TODO Bug 2067871: remove once journey store is available.
-pref("browser.smartwindow.resumeCards.enabled", false);
+pref("browser.smartwindow.resumeCards.enabled", true);
 pref("browser.smartwindow.firstrun.autoAdvanceMS", 3000);
 pref("browser.smartwindow.firstrun.hasCompleted", false);
 pref("browser.smartwindow.showThemesNotice", true);
@@ -2492,6 +2470,12 @@ pref("browser.smartwindow.smartformfill.disallowedRegions", "FR");
 // which keeps the feature away from the stray inputs a page uses for
 // something other than a form the user fills in.
 pref("browser.smartwindow.smartformfill.minFormFields", 4);
+
+#ifdef NIGHTLY_BUILD
+pref("browser.smartwindow.aitab.menus", true);
+#else
+pref("browser.smartwindow.aitab.menus", false);
+#endif
 
 // Smart Window Agent
 pref("browser.smartwindow.agent.enabled", true);
@@ -3863,8 +3847,6 @@ pref("browser.ipProtection.features.siteExceptions", true);
 pref("browser.ipProtection.features.siteInclusions", false);
 // Pref to track if the site inclusion prompt has been shown in the VPN panel
 pref("browser.ipProtection.siteInclusionPromptShown", false);
-// Pref to show confirmation hints for site exceptions
-pref("browser.ipProtection.siteExceptionsHintsEnabled", true);
 pref("browser.ipProtection.log", false);
 pref("browser.ipProtection.guardian.endpoint", "https://vpn.mozilla.org/");
 pref("browser.ipProtection.added", false);
@@ -3898,6 +3880,11 @@ pref("toolkit.rust-components.logging.internal-level", "Warn");
 
 // Settings Redesign 2025 prefs
 pref("browser.settings-redesign.enabled", true);
+
+// Gates the in-progress Notifications sub-page and its entry card in
+// Permissions and data. Not part of the settings-redesign section scheme, since
+// those are all enabled by browser.settings-redesign.enabled being true.
+pref("browser.preferences.notifications-section.enabled", false);
 
 // A preference that will be locked to reflect whether this build has support
 // for XDG Config Home handling. Mostly used to be able to keep tests around

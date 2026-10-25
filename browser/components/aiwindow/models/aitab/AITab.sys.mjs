@@ -9,6 +9,7 @@ import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 import {
   expandUrlTokens,
   stripUnresolvedUrlTokens,
+  URL_REGEX,
   UrlTokenizer,
 } from "moz-src:///browser/components/aiwindow/ui/modules/UrlTokenizer.sys.mjs";
 import { componentTypeName } from "chrome://browser/content/aiwindow/modules/AITabUtils.mjs";
@@ -26,6 +27,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "moz-src:///browser/components/aiwindow/ui/modules/AIWindow.sys.mjs",
   AITabStore:
     "moz-src:///browser/components/aiwindow/ui/modules/AITabStore.sys.mjs",
+  AuthProvider:
+    "moz-src:///browser/components/aiwindow/models/AuthProvider.sys.mjs",
   ConversationStore:
     "moz-src:///browser/components/aiwindow/ui/modules/ConversationStore.sys.mjs",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
@@ -44,8 +47,6 @@ ChromeUtils.defineESModuleGetters(lazy, {
     "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs",
   parseVersion: "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs",
   renderPrompt: "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs",
-  openAIEngine:
-    "moz-src:///browser/components/aiwindow/models/openAIEngine.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
 });
 
@@ -108,6 +109,7 @@ const JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema";
 
 // Total budget (characters) for page text sent to the model, split evenly
 // across the requested tabs so multi-tab requests don't overflow the prompt.
+// Measured after URL tokenization, since URLs only reach the model as tokens.
 const SOURCE_TEXT_BUDGET = 10000;
 // Separator inserted between each page's text in the model prompt.
 const PAGE_BREAK = "\n\n<----- PAGE BREAK ---->\n\n";
@@ -1112,6 +1114,35 @@ export class AITab {
   }
 
   /**
+   * The longest prefix of `text` that fits in `budget` once its URLs are
+   * tokenized. Never ends inside a URL, which would hand the model a token
+   * for a URL that doesn't exist.
+   *
+   * @param {string} text
+   * @param {number} budget
+   * @returns {string}
+   */
+  static #truncateToBudget(text, budget) {
+    // Measures token lengths only. The prompt is tokenized separately, so
+    // nothing registered here can resolve a link in the model's output.
+    const urlTokenizer = new UrlTokenizer();
+    let length = 0;
+    let end = 0;
+    for (const match of text.matchAll(URL_REGEX)) {
+      const gap = match.index - end;
+      if (length + gap >= budget) {
+        break;
+      }
+      length += gap + urlTokenizer.tokenizeText(match[0]).length;
+      if (length > budget) {
+        return text.slice(0, match.index);
+      }
+      end = match.index + match[0].length;
+    }
+    return text.slice(0, end + Math.max(0, budget - length));
+  }
+
+  /**
    * Read the material a surface is composed from: the readable text of each
    * requested URL, plus any content handed over inline, laid out as the
    * prompt's source sections and separated by PAGE_BREAK.
@@ -1183,8 +1214,7 @@ export class AITab {
 
       // Trim each page's text to its share of the budget before sending to the
       // model.
-      const budgetedText =
-        text.length > perTabBudget ? text.slice(0, perTabBudget) : text;
+      const budgetedText = AITab.#truncateToBudget(text, perTabBudget);
       const headLines = [`## ${heading}`, `URL: ${url}`];
       // Omit the Image: line when absent so the model never echoes an empty
       // value.
@@ -1200,7 +1230,7 @@ export class AITab {
 
     if (rawText) {
       sourceParts.push(
-        `${RAW_CONTENT_HEADING}\n\n${rawText.slice(0, perTabBudget)}`
+        `${RAW_CONTENT_HEADING}\n\n${AITab.#truncateToBudget(rawText, perTabBudget)}`
       );
     }
 
@@ -1701,7 +1731,7 @@ export class AITab {
       // only be abandoned once it resolves.
       const response = await conversation.run({
         args,
-        fxAccountToken: await lazy.openAIEngine.getFxAccountToken(),
+        token: await lazy.AuthProvider.getToken(),
       });
 
       if (signal?.aborted) {

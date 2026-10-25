@@ -30,12 +30,6 @@ import { resolvePageLayoutVariant } from "resource://newtab/common/PageLayoutVar
 import { Prefs } from "resource://newtab/lib/ActivityStreamPrefs.sys.mjs";
 import { classifySite } from "resource://newtab/lib/SiteClassifier.sys.mjs";
 
-// Runtime import (not static) — karma's webpack cannot resolve resource://gre.
-// eslint-disable-next-line mozilla/use-static-import
-const { AppConstants } = ChromeUtils.importESModule(
-  "resource://gre/modules/AppConstants.sys.mjs"
-);
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
@@ -60,25 +54,6 @@ ChromeUtils.defineESModuleGetters(lazy, {
   MozAdsReportReason:
     "moz-src:///toolkit/components/uniffi-bindgen-gecko-js/components/generated/RustAdsClient.sys.mjs",
 });
-
-// @backward-compat { version 157 } card_column was added as an extra_key to
-// the pocket impression/click events in 157. A train-hopped XPI can run on
-// older platform builds whose schema lacks it, which would throw a Glean
-// error. Remove this guard, and its call sites, once 157 reaches Release.
-function isCardColumnSupported() {
-  return Services.vc.compare(AppConstants.MOZ_APP_VERSION, "157.0a1") >= 0;
-}
-
-// @backward-compat { version 157 } is_ad_eligible_position was added as an
-// extra_key to the pocket and topsites impression events in 157. A train-hopped
-// XPI can run on older platform builds whose schema lacks it, and glean-core
-// drops the whole event when it sees an unknown extra key. Remove this guard,
-// and its call sites, once 157 reaches Release.
-export function isAdEligiblePositionSupported(
-  version = AppConstants.MOZ_APP_VERSION
-) {
-  return Services.vc.compare(version, "157.0a1") >= 0;
-}
 
 export const PREF_IMPRESSION_ID = "impressionId";
 export const TELEMETRY_PREF = "telemetry";
@@ -169,7 +144,7 @@ export function laplaceNoise(scale) {
  * port has to be part of the key. Never recorded.
  *
  * @param  {string} portID the newtab that sent both actions
- * @param  {number} [dwellId] the id SafeAnchor put on both of them
+ * @param  {number|string} [dwellId] the id SafeAnchor put on both of them
  * @returns {string|null} the token, or null if the link did not send one
  */
 function dwellTokenFor(portID, dwellId) {
@@ -1357,7 +1332,7 @@ export class TelemetryFeed {
    * notification, which can be up to an interval later.
    *
    * @param  {object} page an entry of this.#openedPages
-   * @param  {Element} browser the <browser> showing it
+   * @param  {MozBrowser} browser the <browser> showing it
    */
   #watchOpenedPage(page, browser) {
     page.progressListener = {
@@ -1640,7 +1615,7 @@ export class TelemetryFeed {
             visible_topsites,
             frecency_boosted,
             frecency_boosted_has_exposure: this.frecencyBoostedHasExposure(),
-            ...(is_ad_eligible_position && isAdEligiblePositionSupported()
+            ...(is_ad_eligible_position
               ? { is_ad_eligible_position: true }
               : {}),
           };
@@ -1656,7 +1631,7 @@ export class TelemetryFeed {
             is_sponsored: true,
             position,
             visible_topsites,
-            ...(is_ad_eligible_position && isAdEligiblePositionSupported()
+            ...(is_ad_eligible_position
               ? { is_ad_eligible_position: true }
               : {}),
           };
@@ -1731,8 +1706,7 @@ export class TelemetryFeed {
           visible_topsites,
           smart_scores: JSON.stringify(action.data.smart_scores),
           smart_weights: JSON.stringify(action.data.smart_weights),
-          ...(action.data.is_ad_eligible_position &&
-          isAdEligiblePositionSupported()
+          ...(action.data.is_ad_eligible_position
             ? { is_ad_eligible_position: true }
             : {}),
         });
@@ -2041,7 +2015,7 @@ export class TelemetryFeed {
             newtab_visit_id: session.session_id,
             is_sponsored,
             ...(format ? { format } : {}),
-            ...(card_column && isCardColumnSupported() ? { card_column } : {}),
+            ...(card_column ? { card_column } : {}),
             ...(section
               ? {
                   section,
@@ -2404,7 +2378,9 @@ export class TelemetryFeed {
       privateMetrics.followedSections = followed;
     }
     const surfaceId = this._prefs.get(PREF_SURFACE_ID);
-    privateMetrics.surfaceId = surfaceId;
+    if (surfaceId) {
+      privateMetrics.surfaceId = surfaceId;
+    }
 
     const curCountry = lazy.Region.home;
     if (PRIVATE_PING_SURFACE_COUNTRY_MAP[surfaceId]) {
@@ -2418,7 +2394,10 @@ export class TelemetryFeed {
         : PRIVATE_PING_SURFACE_COUNTRY_MAP[surfaceId][0];
     }
 
-    if (prefs?.inferredPersonalizationConfig?.normalized_time_zone_offset) {
+    if (
+      prefs?.inferredPersonalizationConfig?.normalized_time_zone_offset &&
+      surfaceId
+    ) {
       privateMetrics.utcOffset = lazy.NewTabUtils.getUtcOffset(surfaceId);
     }
     // To prevent fingerprinting we only send one current experiment / branch
@@ -3411,10 +3390,8 @@ export class TelemetryFeed {
       const gleanData = {
         is_sponsored,
         ...(tile.format ? { format: tile.format } : {}),
-        ...(tile.card_column && isCardColumnSupported()
-          ? { card_column: tile.card_column }
-          : {}),
-        ...(tile.is_ad_eligible_position && isAdEligiblePositionSupported()
+        ...(tile.card_column ? { card_column: tile.card_column } : {}),
+        ...(tile.is_ad_eligible_position
           ? { is_ad_eligible_position: true }
           : {}),
         ...(tile.section

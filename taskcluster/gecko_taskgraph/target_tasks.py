@@ -68,6 +68,7 @@ UNCOMMON_TRY_TASK_LABELS = [
     # Can't actually run on try
     r"notarization",
     # not usually needed
+    r"^beetmover-integration-",
     "upload-symbols",
 ]
 
@@ -959,6 +960,11 @@ def target_tasks_general_perf_testing(full_task_graph, parameters, graph_config)
             # Bug 1961145 - Disable bing-search for test-windows11-64-24h2-shippable
             if "windows11" in platform and "bing-search" in try_name:
                 return False
+            # Bug 2074111 - Already running on macosx1500
+            if "macosx1470" in platform and (
+                "jetstream3" in try_name or "speedometer3" in try_name
+            ):
+                return False
             if "browsertime" in try_name:
                 if "chrome" in try_name or "custom-car" in try_name:
                     # Bug 2049065: linux2404 chrome/custom-car tp6 and
@@ -1073,10 +1079,18 @@ def make_desktop_nightly_filter(platforms, graph_config):
     """Returns a filter that gets all nightly tasks on the given platform."""
 
     def filter(task, parameters):
-        # _filter_by_release_project is used instead of filter_for_project
-        # because it fakes things a bit for Try, and allows tasks that
-        # otherwise wouldn't run there to be run
-        filter_for_target_project = _filter_by_release_project(parameters, graph_config)
+        # On Try, _filter_by_release_project fakes things a bit, and allows
+        # tasks that otherwise wouldn't run there to be run. Elsewhere,
+        # including project branches such as Pine, use the project's own
+        # run-on-projects.
+        if parameters["project"] == "try":
+            filter_for_target_project = _filter_by_release_project(
+                parameters, graph_config
+            )
+        else:
+            filter_for_target_project = functools.partial(
+                filter_for_project, parameters=parameters
+            )
 
         return all([
             filter_on_platforms(task, platforms),

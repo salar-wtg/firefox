@@ -4620,16 +4620,6 @@ mozilla::ipc::IPCResult ContentParent::RecvInitStreamFilter(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult ContentParent::RecvAddSecurityState(
-    const MaybeDiscarded<WindowContext>& aContext, uint32_t aStateFlags) {
-  if (aContext.IsNullOrDiscarded()) {
-    return IPC_OK();
-  }
-
-  aContext.get()->AddSecurityState(aStateFlags);
-  return IPC_OK();
-}
-
 already_AddRefed<PExternalHelperAppParent>
 ContentParent::AllocPExternalHelperAppParent(
     nsIURI* uri, const mozilla::net::LoadInfoArgs& aLoadInfoArgs,
@@ -7523,6 +7513,18 @@ void ContentParent::RemoveBrowsingContextGroup(BrowsingContextGroup* aGroup) {
   }
 }
 
+CanonicalBrowsingContext* ContentParent::GetBrowsingContextIfCurrent(
+    const MaybeDiscardedWindowContext& aContext) {
+  if (aContext.IsNullOrDiscarded()) {
+    return nullptr;
+  } else if (aContext->Canonical()->GetContentParent() != this) {
+    return nullptr;
+  } else if (!aContext->IsCurrent()) {
+    return nullptr;
+  }
+  return aContext->Canonical()->GetBrowsingContext();
+}
+
 mozilla::ipc::IPCResult ContentParent::RecvCommitBrowsingContextTransaction(
     const MaybeDiscarded<BrowsingContext>& aContext,
     BrowsingContext::BaseTransaction&& aTransaction, uint64_t aEpoch) {
@@ -7867,28 +7869,44 @@ mozilla::ipc::IPCResult ContentParent::RecvRemoveFromBFCache(
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvSetActiveSessionHistoryEntry(
-    const MaybeDiscarded<BrowsingContext>& aContext,
+    const MaybeDiscarded<WindowContext>& aContext,
     const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo&& aInfo,
-    uint32_t aLoadType, uint32_t aUpdatedCacheKey, const nsID& aChangeID) {
+    uint32_t aLoadType, uint32_t aUpdatedCacheKey, const nsID& aChangeID,
+    const Maybe<NewSessionHistorySharedState>& aNewSharedState) {
   if (aInfo.GetOriginalURI() || aInfo.GetResultPrincipalURI()) {
     return IPC_FAIL(this, "Should not be set by content");
   }
-  if (!aContext.IsNullOrDiscarded()) {
-    aContext.get_canonical()->SetActiveSessionHistoryEntry(
-        aPreviousScrollPos, &aInfo, aLoadType, aUpdatedCacheKey, aChangeID);
+
+  CanonicalBrowsingContext* cbc = GetBrowsingContextIfCurrent(aContext);
+  bool createsSharedState = false;
+  if (!cbc ||
+      (aNewSharedState && !cbc->CreateSharedState(&aInfo, *aNewSharedState,
+                                                  &createsSharedState)) ||
+      !cbc->ValidateSessionHistoryInfo(&aInfo)) {
+    return IPC_OK();
   }
+  cbc->SetActiveSessionHistoryEntry(aPreviousScrollPos, &aInfo, aLoadType,
+                                    aUpdatedCacheKey, aChangeID,
+                                    createsSharedState);
+  cbc->InheritDocumentPrincipalIfNeeded();
   return IPC_OK();
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvReplaceActiveSessionHistoryEntry(
-    const MaybeDiscarded<BrowsingContext>& aContext,
-    SessionHistoryInfo&& aInfo) {
+    const MaybeDiscarded<WindowContext>& aContext, SessionHistoryInfo&& aInfo,
+    const Maybe<NewSessionHistorySharedState>& aNewSharedState) {
   if (aInfo.GetOriginalURI() || aInfo.GetResultPrincipalURI()) {
     return IPC_FAIL(this, "Should not be set by content");
   }
-  if (!aContext.IsNullOrDiscarded()) {
-    aContext.get_canonical()->ReplaceActiveSessionHistoryEntry(&aInfo);
+
+  CanonicalBrowsingContext* cbc = GetBrowsingContextIfCurrent(aContext);
+  if (!cbc || !cbc->GetActiveSessionHistoryEntry() ||
+      (aNewSharedState && !cbc->CreateSharedState(&aInfo, *aNewSharedState)) ||
+      !cbc->ValidateSessionHistoryInfo(&aInfo)) {
+    return IPC_OK();
   }
+  cbc->ReplaceActiveSessionHistoryEntry(&aInfo);
+  cbc->InheritDocumentPrincipalIfNeeded();
   return IPC_OK();
 }
 

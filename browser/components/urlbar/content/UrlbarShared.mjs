@@ -290,6 +290,7 @@ export const UrlbarShared = {
     SEMANTIC_HISTORY: "semanticHistory",
     SUGGESTED_INDEX: "suggestedIndex",
     TAIL_SUGGESTION: "tailSuggestion",
+    TEMPORAL_SUGGESTION: "temporalSuggestion",
   }),
 
   // Defines provider types.
@@ -1227,9 +1228,12 @@ export const UrlbarShared = {
       case UrlbarShared.RESULT_GROUP.SEMANTIC_HISTORY: {
         return "general";
       }
-      // Group of UrlbarProviderQuickSuggest is GENERAL_PARENT.
+      // GENERAL_PARENT is the group for typical Suggest results.
       case UrlbarShared.RESULT_GROUP.GENERAL_PARENT: {
         return "suggest";
+      }
+      case UrlbarShared.RESULT_GROUP.TEMPORAL_SUGGESTION: {
+        return "temporal";
       }
       case UrlbarShared.RESULT_GROUP.ABOUT_PAGES: {
         return "about_page";
@@ -1319,8 +1323,6 @@ export const UrlbarShared = {
             return "tab_to_search";
           case "UrlbarProviderUnitConversion":
             return "unit";
-          case "UrlbarProviderQuickSuggestContextualOptIn":
-            return "fxsuggest_data_sharing_opt_in";
           case "UrlbarProviderAddonsShortcutMoved":
             return "addons_shortcut_moved";
           case "UrlbarProviderGlobalActions":

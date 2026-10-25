@@ -414,7 +414,7 @@ NS_DECLARE_FRAME_PROPERTY_WITHOUT_DTOR(InsideMarkerProperty, nsIFrame)
 //----------------------------------------------------------------------
 
 nsBlockFrame* NS_NewBlockFrame(PresShell* aPresShell, ComputedStyle* aStyle) {
-  return new (aPresShell) nsBlockFrame(aStyle, aPresShell->GetPresContext());
+  return new nsBlockFrame(aStyle, aPresShell->GetPresContext());
 }
 
 NS_IMPL_FRAMEARENA_HELPERS(nsBlockFrame)
@@ -1476,7 +1476,8 @@ void nsBlockFrame::ReflowAbsoluteDescendantsInInlineFrame(
     // were pushed from a previous fragmentainer.
     AddOrRemoveStateBits(
         NS_BLOCK_HAS_INLINE_ABSPOS_DESCENDANT,
-        prev->HasAnyStateBits(NS_BLOCK_HAS_INLINE_ABSPOS_DESCENDANT));
+        foundAbspos ||
+            prev->HasAnyStateBits(NS_BLOCK_HAS_INLINE_ABSPOS_DESCENDANT));
   } else if (!foundAbspos) {
     // We are a first-in-flow. Remove NS_BLOCK_HAS_INLINE_ABSPOS_DESCENDANT bit
     // if we didn't find any abspos descendants after a full walk over all our
@@ -1773,28 +1774,33 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
   // Return a BalanceTarget record representing the position at which line-clamp
   // will take effect for the current line list. Only to be used when there are
   // enough lines that the clamp will apply.
-  auto getClampPosition = [&](uint32_t aClampCount) -> BalanceTarget {
-    if (NS_WARN_IF(aClampCount >= mLines.size())) {
+  auto getClampPosition = [&]() -> BalanceTarget {
+    if ((!HasLineClampEllipsis() && !HasLineClampEllipsisDescendant()) ||
+        LineClampIsClampedToZero()) {
       return BalanceTarget{};
     }
-    auto iter = mLines.begin();
-    for (uint32_t i = 0; i < aClampCount; i++) {
-      ++iter;
+    for (LineClampLineIterator iter(this, this);
+         nsLineBox* line = iter.GetCurrentLine(); iter.Next()) {
+      // LineClampLineIterator is used to mimic the traversal behaviour of
+      // FindLineClamp*Target(). We skip over empty lines as they are not
+      // counted for numbered line-clamp.
+      if (line->IsEmpty()) {
+        continue;
+      }
+      if (line->HasLineClampEllipsis()) {
+        // The balance target should be the first line past the clamp point.
+        iter.Next();
+        line = iter.GetCurrentLine();
+
+        nsIFrame* firstChild = line->mFirstChild;
+        if (firstChild && firstChild->IsTextFrame()) {
+          auto* textFrame = static_cast<nsTextFrame*>(firstChild);
+          return BalanceTarget{textFrame->GetContent(),
+                               textFrame->GetContentOffset(), line->BStart()};
+        }
+      }
     }
-    nsIFrame* firstChild = iter->mFirstChild;
-    if (!firstChild) {
-      return BalanceTarget{};
-    }
-    nsIContent* content = firstChild->GetContent();
-    if (!content) {
-      return BalanceTarget{};
-    }
-    int32_t offset = 0;
-    if (firstChild->IsTextFrame()) {
-      auto* textFrame = static_cast<nsTextFrame*>(firstChild);
-      offset = textFrame->GetContentOffset();
-    }
-    return BalanceTarget{content, offset, iter.get()->BStart()};
+    return BalanceTarget{};
   };
 
   // "balancing" is implemented by shortening the effective inline-size of the
@@ -1840,18 +1846,14 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
       trialState.ResetForBalance(balanceStep);
       balanceStep /= 2;
 
-      // If -webkit-line-clamp is in effect, then we need to maintain the
+      // If line-clamp is in effect, then we need to maintain the
       // content location at which clamping occurs, rather than the total
       // number of lines in the block.
       if (StaticPrefs::layout_css_text_wrap_balance_after_clamp_enabled() &&
           IsLineClampRoot(this)) {
-        uint32_t lineClampCount =
-            GetLineClampMaxLines(aReflowInput.mStyleDisplay->mWebkitLineClamp);
-        if (uint32_t(balanceTarget.mOffset) > lineClampCount) {
-          auto t = getClampPosition(lineClampCount);
-          if (t.mContent) {
-            balanceTarget = t;
-          }
+        BalanceTarget lineClampBalanceTarget = getClampPosition();
+        if (lineClampBalanceTarget != BalanceTarget{}) {
+          balanceTarget = lineClampBalanceTarget;
         }
       }
 
@@ -1867,8 +1869,7 @@ void nsBlockFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
         return false;
       }
       if (balanceTarget.mContent) {
-        auto t = getClampPosition(
-            GetLineClampMaxLines(aReflowInput.mStyleDisplay->mWebkitLineClamp));
+        auto t = getClampPosition();
         return t == balanceTarget;
       }
       int32_t numLines =
@@ -6678,7 +6679,7 @@ void nsBlockFrame::DrainSelfPushedFloats() {
     }
 
     if (ourPushedFloats->IsEmpty()) {
-      StealPushedFloats()->Delete(presShell);
+      StealPushedFloats()->Delete();
     }
   }
 }
@@ -6690,7 +6691,7 @@ void nsBlockFrame::DrainPushedFloats() {
   // floats list, containing floats that we need to own.  Take these.
   nsBlockFrame* prevBlock = static_cast<nsBlockFrame*>(GetPrevInFlow());
   if (prevBlock) {
-    AutoFrameListPtr list(PresContext(), prevBlock->StealPushedFloats());
+    AutoFrameListPtr list(prevBlock->StealPushedFloats());
     if (list && list->NotEmpty()) {
       EnsureFloats()->InsertFrames(this, nullptr, std::move(*list));
     }
@@ -6781,15 +6782,14 @@ void nsBlockFrame::SetOverflowFloats(nsFrameList&& aList,
     nsFrameList* list = TakeProperty(OverflowFloatsProperty());
     NS_ASSERTION(aPropValue == list, "prop value mismatch");
     list->Clear();
-    list->Delete(PresShell());
+    list->Delete();
     RemoveStateBits(NS_BLOCK_HAS_OVERFLOW_FLOATS);
   } else if (HasAnyStateBits(NS_BLOCK_HAS_OVERFLOW_FLOATS)) {
     NS_ASSERTION(aPropValue == GetProperty(OverflowFloatsProperty()),
                  "prop value mismatch");
     *aPropValue = std::move(aList);
   } else {
-    SetProperty(OverflowFloatsProperty(),
-                new (PresShell()) nsFrameList(std::move(aList)));
+    SetProperty(OverflowFloatsProperty(), new nsFrameList(std::move(aList)));
     AddStateBits(NS_BLOCK_HAS_OVERFLOW_FLOATS);
   }
 }
@@ -6844,7 +6844,7 @@ nsFrameList* nsBlockFrame::EnsureFloats() {
   if (list) {
     return list;
   }
-  list = new (PresShell()) nsFrameList;
+  list = new nsFrameList;
   SetProperty(FloatsProperty(), list);
   AddStateBits(NS_BLOCK_HAS_FLOATS);
   return list;
@@ -6885,7 +6885,7 @@ nsFrameList* nsBlockFrame::EnsurePushedFloats() {
     return result;
   }
 
-  result = new (PresShell()) nsFrameList;
+  result = new nsFrameList;
   SetProperty(PushedFloatsProperty(), result);
   AddStateBits(NS_BLOCK_HAS_PUSHED_FLOATS);
 
@@ -7253,7 +7253,7 @@ void nsBlockFrame::RemoveFloat(nsIFrame* aFloat) {
     didStartRemovingFloat = true;
     if (floats->StartRemoveFrame(aFloat)) {
       if (floats->IsEmpty()) {
-        StealFloats()->Delete(PresShell());
+        StealFloats()->Delete();
       }
       return;
     }
@@ -7269,7 +7269,7 @@ void nsBlockFrame::RemoveFloat(nsIFrame* aFloat) {
     }
     if (found) {
       if (pushedFloats->IsEmpty()) {
-        StealPushedFloats()->Delete(PresShell());
+        StealPushedFloats()->Delete();
       }
       return;
     }
@@ -8207,7 +8207,7 @@ void nsBlockFrame::ReflowPushedFloats(BlockReflowState& aState,
     if (prevContinuation && prevContinuation->GetParent() == f->GetParent()) {
       floats->RemoveFrame(f);
       if (floats->IsEmpty()) {
-        StealFloats()->Delete(PresShell());
+        StealFloats()->Delete();
         floats = nullptr;
       }
       aState.AppendPushedFloatChain(f);
@@ -9018,7 +9018,7 @@ void nsBlockFrame::SetMarkerFrameForListItem(nsIFrame* aMarkerFrame) {
     SetProperty(InsideMarkerProperty(), aMarkerFrame);
   } else {
     SetProperty(OutsideMarkerProperty(),
-                new (PresShell()) nsFrameList(aMarkerFrame, aMarkerFrame));
+                new nsFrameList(aMarkerFrame, aMarkerFrame));
   }
   AddStateBits(NS_BLOCK_HAS_MARKER);
 }

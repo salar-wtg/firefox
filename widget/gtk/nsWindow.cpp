@@ -5307,22 +5307,28 @@ void nsWindow::KioskLockOnMonitor() {
   sGdkWindowFullscreenOnMonitor(GetToplevelGdkWindow(), monitor);
 }
 
-static bool IsFullscreenSupported(GtkWidget* aShell) {
-#ifdef MOZ_X11
-  GdkScreen* screen = gtk_widget_get_screen(aShell);
-  GdkAtom atom = gdk_atom_intern("_NET_WM_STATE_FULLSCREEN", FALSE);
-  return gdk_x11_screen_supports_net_wm_hint(screen, atom);
-#else
-  return true;
+bool nsWindow::IsFullscreenSupported() {
+#if defined(MOZ_X11)
+  if (GdkIsX11Display()) {
+    GdkScreen* screen = gtk_widget_get_screen(mShell);
+    GdkAtom atom = gdk_atom_intern("_NET_WM_STATE_FULLSCREEN", FALSE);
+    return gdk_x11_screen_supports_net_wm_hint(screen, atom);
+  }
 #endif
+#if defined(MOZ_WAYLAND)
+  if (auto* window = AsWaylandToplevel()) {
+    return !window->IsPipWindow();
+  }
+#endif
+  return true;
 }
 
 nsresult nsWindow::MakeFullScreen(bool aFullScreen) {
-  LOG("nsWindow::MakeFullScreen aFullScreen %d\n", aFullScreen);
-
-  if (GdkIsX11Display() && !IsFullscreenSupported(mShell)) {
+  if (!IsFullscreenSupported()) {
     return NS_ERROR_NOT_AVAILABLE;
   }
+
+  LOG("nsWindow::MakeFullScreen aFullScreen %d\n", aFullScreen);
 
   if (aFullScreen) {
     if (mSizeMode != nsSizeMode_Fullscreen &&
@@ -7570,8 +7576,9 @@ void nsWindow::InsertEmoji(RefPtr<nsWindow> aToplevelWindow) {
   }
 
   if (IsTopLevelWidget()) {
-    if (nsIWidget* popup =
-            nsXULPopupManager::GetInstance()->GetRollupWidget()) {
+    // Only redirect to our own popup, not to an open popup of another window.
+    nsIWidget* popup = nsXULPopupManager::GetInstance()->GetRollupWidget();
+    if (popup && popup->GetTopLevelWidget() == this) {
       if (nsWindow* window = nsWindow::FromWidget(popup)) {
         LOG("nsWindow::InsertEmoji() - redirect to child popup [%p]", window);
         window->InsertEmoji(this);
@@ -7596,6 +7603,11 @@ void nsWindow::InsertEmoji(RefPtr<nsWindow> aToplevelWindow) {
   if (!entry) {
     entry = moz_container_entry_set(MOZ_CONTAINER(mContainer), gtk_entry_new());
     gtk_widget_show(entry);
+    // Keep aToplevelWindow alive as long as the entry can call the handler.
+    g_object_set_data_full(
+        G_OBJECT(entry), "nsWindow-emoji-target",
+        do_AddRef(aToplevelWindow).take(),
+        [](gpointer data) { static_cast<nsWindow*>(data)->Release(); });
     g_signal_connect(entry, "insert_text",
                      G_CALLBACK(+[](GtkWidget* entry, gchar* text, gint length,
                                     gint* position, gpointer data) {

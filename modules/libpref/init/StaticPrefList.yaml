@@ -2933,7 +2933,7 @@
 # see https://html.spec.whatwg.org/#blocking-attributes
 - name: dom.element.blocking.enabled
   type: RelaxedAtomicBool
-  value: false
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
 
 # The implementation-defined timeout of
@@ -5856,7 +5856,7 @@
 
 - name: dom.viewTransitions.cross-document.enabled
   type: RelaxedAtomicBool
-  value: false
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
   rust: true
 
@@ -7870,6 +7870,19 @@
   value: false
   mirror: once
 
+# Disable reuse decoder device even when it is required, e.g. on AMD.
+- name: gfx.direct3d11.reuse-decoder-device-force-disabled
+  type: bool
+  value: false
+  mirror: once
+
+# Whether to use D3D11 fences for D3D11 textures when the device supports them.
+# This does not affect fences created by WebGPU or DirectComposition.
+- name: gfx.direct3d11.fences-enabled
+  type: bool
+  value: true
+  mirror: once
+
 - name: gfx.direct3d11.allow-keyed-mutex
   type: RelaxedAtomicBool
   value: true
@@ -8019,9 +8032,9 @@
   # Note that this is only checked at startup; toggling it requires a restart
   # to take effect.
 -   name: gfx.font_rendering.fontations.enabled
-    type: bool
+    type: RelaxedAtomicBool
     value: false
-    mirror: once
+    mirror: always
 #endif
 
 #if defined(XP_DARWIN)
@@ -8090,7 +8103,7 @@
 # Whether to hide legacy font formats (Type 1 and PCF) from the font list.
 -   name: gfx.font_rendering.fontconfig.skip_legacy_fonts
     type: RelaxedAtomicBool
-    value: @IS_NIGHTLY_BUILD@
+    value: true
     mirror: always
 #endif
 
@@ -8468,12 +8481,6 @@
 # <image> elements with opacity are drawn with the opacity folded into the
 # WebRender image's color multiplier instead of being rasterized in a blob.
 - name: gfx.webrender.svg-images.opacity
-  type: RelaxedAtomicBool
-  value: false
-  mirror: always
-
-# <image> elements can be drawn with WebRender under a non-uniform scale.
-- name: gfx.webrender.svg-images.non-uniform-scale
   type: RelaxedAtomicBool
   value: false
   mirror: always
@@ -16025,7 +16032,7 @@
 # address and by-type (HTTPS/TXT) negative entries.
 - name: network.dnsNegativeCacheExpirationGracePeriod
   type: RelaxedAtomicUint32
-  value: 60
+  value: 600
   mirror: always
 
 # Get TTL; not supported on all platforms; nop on the unsupported ones.
@@ -17746,7 +17753,13 @@
 # Enable HTTP Compression Dictionary support
 - name: network.http.dictionaries.enable
   type: RelaxedAtomicBool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
+  mirror: always
+
+# Whether to collect telemetry about Akamai responses and Akamai WAF blocks.
+- name: network.http.akamai_waf_telemetry.enabled
+  type: RelaxedAtomicBool
+  value: true
   mirror: always
 
 #---------------------------------------------------------------------------
@@ -18099,8 +18112,32 @@
 # Whether we use the CSS @page size as the paper size in PDF output.
 - name: print.save_as_pdf.use_page_rule_size_as_paper_size.enabled
   type: RelaxedAtomicBool
-  value: @IS_NOT_ANDROID@
+  value: true
   mirror: always
+
+#ifdef XP_MACOSX
+# Whether, when saving to a PDF file via the system print dialog, we write the
+# PDF directly to the destination file rather than to a temporary file which is
+# then moved into place.
+- name: print.macos.stream_to_destination_file.enabled
+  type: bool
+  value: true
+  mirror: always
+
+# Whether we prefer sending the generated PDF through the system print
+# session for printing. Useful for debugging.
+- name: print.macos.prefer_print_session
+  type: bool
+  value: false
+  mirror: always
+
+# Whether we set com.apple.print.PrintSettings.PMTotalBeginPages to work around
+# driver bugs.
+- name: print.macos.driver-workarounds.begin-pages
+  type: bool
+  value: true
+  mirror: always
+#endif
 
 # The default DPI for printing.
 #
@@ -19918,9 +19955,11 @@
 # circumstances. See RemoveForbiddenNodes in SVGUseElement.cpp for the spec
 # text.
 #
-# - 0: Don't restrict ever.
-# - 1: Restrict only cross-document.
-# - 2/other: restrict always.
+# - 0: Don't restrict anything.
+# - 1: Restrict only to SVG graphics elements except foreignObject when
+#      cross-document, and remove foreignObject and other foreign elements if
+#      same-document.
+# - 2/other: restrict only to SVG graphics elements except foreignObject.
 #
 # We allow the behavior to be configurable via this pref. Our chosen default
 # value forbids non-graphical content in <svg:use> clones of cross-document
@@ -20894,7 +20933,7 @@
 #if defined(MOZ_WIDGET_ANDROID)
 - name: webgl.out-of-process.enable-ahardwarebuffer
   type: bool
-  value: true
+  value: false
   mirror: once
 #endif
 

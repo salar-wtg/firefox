@@ -18,7 +18,6 @@ ChromeUtils.defineESModuleGetters(this, {
     "resource://gre/modules/ExtensionSettingsStore.sys.mjs",
   GleanSessionType: "resource://newtab/lib/TelemetryFeed.sys.mjs",
   HomePage: "resource:///modules/HomePage.sys.mjs",
-  isAdEligiblePositionSupported: "resource://newtab/lib/TelemetryFeed.sys.mjs",
   laplaceNoise: "resource://newtab/lib/TelemetryFeed.sys.mjs",
   NewTabContentPing: "resource://newtab/lib/NewTabContentPing.sys.mjs",
   NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
@@ -2092,39 +2091,6 @@ add_task(
   }
 );
 
-add_task(async function test_isAdEligiblePositionSupported() {
-  info(
-    "is_ad_eligible_position should only be sent on hosts whose schema has it"
-  );
-
-  // A train-hopped XPI on a host older than 157 must not send the key, or
-  // glean-core rejects the extras and drops the whole event.
-  Assert.ok(
-    !isAdEligiblePositionSupported("155.0"),
-    "Should not send on a 155 host"
-  );
-  Assert.ok(
-    !isAdEligiblePositionSupported("156.0"),
-    "Should not send on a 156 host"
-  );
-  Assert.ok(
-    isAdEligiblePositionSupported("157.0a1"),
-    "Should send on the 157 nightly it landed in"
-  );
-  Assert.ok(
-    isAdEligiblePositionSupported("157.0b4"),
-    "Should send on 157 beta"
-  );
-  Assert.ok(
-    isAdEligiblePositionSupported("157.0"),
-    "Should send on 157 release"
-  );
-  Assert.ok(
-    isAdEligiblePositionSupported("158.0a1"),
-    "Should send on a newer host"
-  );
-});
-
 add_task(
   async function test_handleTopSitesOrganicImpressionStats_record_glean_topsites_click() {
     info(
@@ -3933,6 +3899,52 @@ add_task(
     sandbox.restore();
   }
 );
+
+add_task(async function test_configureContentPing_surfaceId_gates_utcOffset() {
+  info(
+    "configureContentPing should only send surfaceId and utcOffset when a " +
+      "surfaceId is known"
+  );
+
+  const SURFACE_ID_PREF =
+    "browser.newtabpage.activity-stream.telemetry.surfaceId";
+  let sandbox = sinon.createSandbox();
+  let instance = new TelemetryFeed();
+  instance.store = {
+    getState: () => ({
+      Prefs: {
+        values: {
+          trainhopConfig: {},
+          inferredPersonalizationConfig: { normalized_time_zone_offset: true },
+        },
+      },
+      DiscoveryStream: { sectionPersonalization: {} },
+      InferredPersonalization: { initialized: false },
+    }),
+  };
+  let scheduleStub = sandbox.stub(
+    instance.newtabContentPing,
+    "scheduleSubmission"
+  );
+  sandbox.stub(instance.newtabContentPing, "setMaxEventsPerDay");
+  sandbox.stub(instance.newtabContentPing, "setMaxClickEventsPerDay");
+  sandbox.stub(instance.newtabContentPing, "setMaxClickEventsPerWeek");
+
+  Services.prefs.clearUserPref(SURFACE_ID_PREF);
+  await instance.configureContentPing();
+  let [metrics] = scheduleStub.lastCall.args;
+  Assert.ok(!("surfaceId" in metrics), "No surfaceId without the pref");
+  Assert.ok(!("utcOffset" in metrics), "No utcOffset without a surfaceId");
+
+  Services.prefs.setStringPref(SURFACE_ID_PREF, "NEW_TAB_EN_US");
+  await instance.configureContentPing();
+  [metrics] = scheduleStub.lastCall.args;
+  Assert.equal(metrics.surfaceId, "NEW_TAB_EN_US", "surfaceId is sent");
+  Assert.equal(typeof metrics.utcOffset, "number", "utcOffset is sent");
+
+  Services.prefs.clearUserPref(SURFACE_ID_PREF);
+  sandbox.restore();
+});
 
 add_task(
   async function test_configureContentPing_omits_experiment_when_not_merino_feed_experiment() {

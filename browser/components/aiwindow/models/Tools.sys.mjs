@@ -1626,6 +1626,18 @@ const AITAB_ERROR_GUIDANCE = Object.freeze({
 });
 
 /**
+ * Whether the modify_slug field in the tool params is configured
+ * for an AITab modification
+ *
+ * @param {string} modify_slug
+ *
+ * @returns {boolean}
+ */
+export function isAITabModification(modify_slug) {
+  return typeof modify_slug == "string" && !!modify_slug.trim();
+}
+
+/**
  * @param {object} toolParams
  * @param {string[]} [toolParams.url_list]
  * @param {string} [toolParams.focus]
@@ -1637,10 +1649,11 @@ const AITAB_ERROR_GUIDANCE = Object.freeze({
  * @returns {Promise<
  *   {success: true,
  *    toolResult: {message: string, page: {slug: string}},
- *    uiData: {uiType: "aitab",
+ *    uiData?: {uiType: "aitab",
  *      properties: {state: "choose", viewerURL: string, title: string}}} |
  *   {success: false, toolResult: string}
- * >} The model response and UI data on success, or an error message on failure.
+ * >} The model response on success, plus UI data for a new page (a
+ *   modification has none), or an error message on failure.
  */
 export async function createAITab(
   { url_list, focus, raw_content, modify_slug, modify_instructions },
@@ -1661,7 +1674,7 @@ export async function createAITab(
   // Whether this call revises an existing page or writes a new one, so every
   // message the model gets back names what actually happened.
   // Matches how generateAITab reads modify_slug, so a blank one is a create.
-  const isModification = typeof modify_slug == "string" && !!modify_slug.trim();
+  const isModification = isAITabModification(modify_slug);
   const action = isModification ? "updated" : "created";
   const result = await lazy.AITab.generateAITab(
     {
@@ -1697,6 +1710,18 @@ export async function createAITab(
     };
   }
 
+  // slug addresses the page in its URL and is shared by every version, and
+  // is what modify_slug takes to revise this page on a later turn. Lets a
+  // later turn find this page from the conversation's tool messages.
+  const page = { slug: stored.slug };
+
+  if (isModification) {
+    return {
+      success: true,
+      toolResult: { message: "The page was modified.", page },
+    };
+  }
+
   const viewerURL = lazy.AITab.buildViewerURL(stored.slug);
 
   // Mark the viewer URL as seen so the chat renders it as a trusted, labeled
@@ -1717,11 +1742,8 @@ export async function createAITab(
   return {
     success: true,
     toolResult: {
-      message: `The page was ${action}. Link the user to it as [${title}](§url_token: ${token}§).`,
-      // slug addresses the page in its URL and is shared by every version, and
-      // is what modify_slug takes to revise this page on a later turn. Lets a
-      // later turn find this page from the conversation's tool messages.
-      page: { slug: stored.slug },
+      message: `The page was created. Link the user to it as [${title}](§url_token: ${token}§).`,
+      page,
     },
     uiData: {
       uiType: UI_TYPES.AITAB,

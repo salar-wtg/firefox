@@ -20,8 +20,8 @@
  */
 
 /**
- * pdfjsVersion = 6.5.260
- * pdfjsBuild = 33734f1fd
+ * pdfjsVersion = 6.5.334
+ * pdfjsBuild = 67667f1e4
  */
 
 ;// ./src/shared/util.js
@@ -538,6 +538,11 @@ class Util {
   static makeHexColor(r, g, b) {
     return `#${this.hexNums[r]}${this.hexNums[g]}${this.hexNums[b]}`;
   }
+  static get identity0to256Map() {
+    return shadow(this, "identity0to256Map", Uint8Array.from({
+      length: 256
+    }, (_, i) => i));
+  }
   static transform(m1, m2) {
     return [m1[0] * m2[0] + m1[2] * m2[1], m1[1] * m2[0] + m1[3] * m2[1], m1[0] * m2[2] + m1[2] * m2[3], m1[1] * m2[2] + m1[3] * m2[3], m1[0] * m2[4] + m1[2] * m2[5] + m1[4], m1[1] * m2[4] + m1[3] * m2[5] + m1[5]];
   }
@@ -604,10 +609,10 @@ class Util {
       b1 += m1r2;
       b2 += m1r2;
     }
-    output[0] = Math.min(output[0], a0, a1, a2, a3);
-    output[1] = Math.min(output[1], b0, b1, b2, b3);
-    output[2] = Math.max(output[2], a0, a1, a2, a3);
-    output[3] = Math.max(output[3], b0, b1, b2, b3);
+    output[0] = Math.min(output[0], a0, a1, Math.min(a2, a3));
+    output[1] = Math.min(output[1], b0, b1, Math.min(b2, b3));
+    output[2] = Math.max(output[2], a0, a1, Math.max(a2, a3));
+    output[3] = Math.max(output[3], b0, b1, Math.max(b2, b3));
   }
   static inverseTransform(m) {
     const d = m[0] * m[3] - m[1] * m[2];
@@ -3846,16 +3851,27 @@ class DecodeStream extends BaseStream {
         writable
       } = new DecompressionStream(name);
       const writer = writable.getWriter();
-      await writer.ready;
-      writer.write(bytes).then(async () => {
-        await writer.ready;
-        await writer.close();
-      }).catch(() => {});
+      writer.write(bytes).catch(() => {});
+      writer.close().catch(() => {});
       const chunks = [];
       let totalLength = 0;
-      for await (const chunk of readable) {
+      const reader = readable.getReader();
+      while (true) {
+        const {
+          value: chunk,
+          done
+        } = await reader.read();
+        if (done) {
+          break;
+        }
         chunks.push(chunk);
         totalLength += chunk.byteLength;
+      }
+      if (chunks.length === 1) {
+        return {
+          decompressed: chunks[0],
+          compressed: bytes
+        };
       }
       const data = new Uint8Array(totalLength);
       let offset = 0;
@@ -6239,23 +6255,16 @@ function meshUpdateBounds(self) {
   self.bounds = [minX, minY, maxX, maxY];
 }
 function meshPackData(self) {
-  let i, j, ii;
   const coords = self.coords;
   const coordsPacked = new Float32Array(coords.length * 2);
-  for (i = 0, j = 0, ii = coords.length; i < ii; i++) {
-    const xy = coords[i];
-    coordsPacked[j++] = xy[0];
-    coordsPacked[j++] = xy[1];
+  for (let i = 0, ii = coords.length; i < ii; i++) {
+    coordsPacked.set(coords[i], i * 2);
   }
   self.coords = coordsPacked;
   const colors = self.colors;
   const colorsPacked = new Uint8Array(colors.length * 4);
-  for (i = 0, j = 0, ii = colors.length; i < ii; i++) {
-    const c = colors[i];
-    colorsPacked[j++] = c[0];
-    colorsPacked[j++] = c[1];
-    colorsPacked[j++] = c[2];
-    j++;
+  for (let i = 0, ii = colors.length; i < ii; i++) {
+    colorsPacked.set(colors[i], i * 4);
   }
   self.colors = colorsPacked;
   for (const figure of self.figures) {
@@ -9877,11 +9886,16 @@ const distDecode = new Int32Array([0x00001, 0x00002, 0x00003, 0x00004, 0x10005, 
 const fixedLitCodeTab = [new Int32Array([0x70100, 0x80050, 0x80010, 0x80118, 0x70110, 0x80070, 0x80030, 0x900c0, 0x70108, 0x80060, 0x80020, 0x900a0, 0x80000, 0x80080, 0x80040, 0x900e0, 0x70104, 0x80058, 0x80018, 0x90090, 0x70114, 0x80078, 0x80038, 0x900d0, 0x7010c, 0x80068, 0x80028, 0x900b0, 0x80008, 0x80088, 0x80048, 0x900f0, 0x70102, 0x80054, 0x80014, 0x8011c, 0x70112, 0x80074, 0x80034, 0x900c8, 0x7010a, 0x80064, 0x80024, 0x900a8, 0x80004, 0x80084, 0x80044, 0x900e8, 0x70106, 0x8005c, 0x8001c, 0x90098, 0x70116, 0x8007c, 0x8003c, 0x900d8, 0x7010e, 0x8006c, 0x8002c, 0x900b8, 0x8000c, 0x8008c, 0x8004c, 0x900f8, 0x70101, 0x80052, 0x80012, 0x8011a, 0x70111, 0x80072, 0x80032, 0x900c4, 0x70109, 0x80062, 0x80022, 0x900a4, 0x80002, 0x80082, 0x80042, 0x900e4, 0x70105, 0x8005a, 0x8001a, 0x90094, 0x70115, 0x8007a, 0x8003a, 0x900d4, 0x7010d, 0x8006a, 0x8002a, 0x900b4, 0x8000a, 0x8008a, 0x8004a, 0x900f4, 0x70103, 0x80056, 0x80016, 0x8011e, 0x70113, 0x80076, 0x80036, 0x900cc, 0x7010b, 0x80066, 0x80026, 0x900ac, 0x80006, 0x80086, 0x80046, 0x900ec, 0x70107, 0x8005e, 0x8001e, 0x9009c, 0x70117, 0x8007e, 0x8003e, 0x900dc, 0x7010f, 0x8006e, 0x8002e, 0x900bc, 0x8000e, 0x8008e, 0x8004e, 0x900fc, 0x70100, 0x80051, 0x80011, 0x80119, 0x70110, 0x80071, 0x80031, 0x900c2, 0x70108, 0x80061, 0x80021, 0x900a2, 0x80001, 0x80081, 0x80041, 0x900e2, 0x70104, 0x80059, 0x80019, 0x90092, 0x70114, 0x80079, 0x80039, 0x900d2, 0x7010c, 0x80069, 0x80029, 0x900b2, 0x80009, 0x80089, 0x80049, 0x900f2, 0x70102, 0x80055, 0x80015, 0x8011d, 0x70112, 0x80075, 0x80035, 0x900ca, 0x7010a, 0x80065, 0x80025, 0x900aa, 0x80005, 0x80085, 0x80045, 0x900ea, 0x70106, 0x8005d, 0x8001d, 0x9009a, 0x70116, 0x8007d, 0x8003d, 0x900da, 0x7010e, 0x8006d, 0x8002d, 0x900ba, 0x8000d, 0x8008d, 0x8004d, 0x900fa, 0x70101, 0x80053, 0x80013, 0x8011b, 0x70111, 0x80073, 0x80033, 0x900c6, 0x70109, 0x80063, 0x80023, 0x900a6, 0x80003, 0x80083, 0x80043, 0x900e6, 0x70105, 0x8005b, 0x8001b, 0x90096, 0x70115, 0x8007b, 0x8003b, 0x900d6, 0x7010d, 0x8006b, 0x8002b, 0x900b6, 0x8000b, 0x8008b, 0x8004b, 0x900f6, 0x70103, 0x80057, 0x80017, 0x8011f, 0x70113, 0x80077, 0x80037, 0x900ce, 0x7010b, 0x80067, 0x80027, 0x900ae, 0x80007, 0x80087, 0x80047, 0x900ee, 0x70107, 0x8005f, 0x8001f, 0x9009e, 0x70117, 0x8007f, 0x8003f, 0x900de, 0x7010f, 0x8006f, 0x8002f, 0x900be, 0x8000f, 0x8008f, 0x8004f, 0x900fe, 0x70100, 0x80050, 0x80010, 0x80118, 0x70110, 0x80070, 0x80030, 0x900c1, 0x70108, 0x80060, 0x80020, 0x900a1, 0x80000, 0x80080, 0x80040, 0x900e1, 0x70104, 0x80058, 0x80018, 0x90091, 0x70114, 0x80078, 0x80038, 0x900d1, 0x7010c, 0x80068, 0x80028, 0x900b1, 0x80008, 0x80088, 0x80048, 0x900f1, 0x70102, 0x80054, 0x80014, 0x8011c, 0x70112, 0x80074, 0x80034, 0x900c9, 0x7010a, 0x80064, 0x80024, 0x900a9, 0x80004, 0x80084, 0x80044, 0x900e9, 0x70106, 0x8005c, 0x8001c, 0x90099, 0x70116, 0x8007c, 0x8003c, 0x900d9, 0x7010e, 0x8006c, 0x8002c, 0x900b9, 0x8000c, 0x8008c, 0x8004c, 0x900f9, 0x70101, 0x80052, 0x80012, 0x8011a, 0x70111, 0x80072, 0x80032, 0x900c5, 0x70109, 0x80062, 0x80022, 0x900a5, 0x80002, 0x80082, 0x80042, 0x900e5, 0x70105, 0x8005a, 0x8001a, 0x90095, 0x70115, 0x8007a, 0x8003a, 0x900d5, 0x7010d, 0x8006a, 0x8002a, 0x900b5, 0x8000a, 0x8008a, 0x8004a, 0x900f5, 0x70103, 0x80056, 0x80016, 0x8011e, 0x70113, 0x80076, 0x80036, 0x900cd, 0x7010b, 0x80066, 0x80026, 0x900ad, 0x80006, 0x80086, 0x80046, 0x900ed, 0x70107, 0x8005e, 0x8001e, 0x9009d, 0x70117, 0x8007e, 0x8003e, 0x900dd, 0x7010f, 0x8006e, 0x8002e, 0x900bd, 0x8000e, 0x8008e, 0x8004e, 0x900fd, 0x70100, 0x80051, 0x80011, 0x80119, 0x70110, 0x80071, 0x80031, 0x900c3, 0x70108, 0x80061, 0x80021, 0x900a3, 0x80001, 0x80081, 0x80041, 0x900e3, 0x70104, 0x80059, 0x80019, 0x90093, 0x70114, 0x80079, 0x80039, 0x900d3, 0x7010c, 0x80069, 0x80029, 0x900b3, 0x80009, 0x80089, 0x80049, 0x900f3, 0x70102, 0x80055, 0x80015, 0x8011d, 0x70112, 0x80075, 0x80035, 0x900cb, 0x7010a, 0x80065, 0x80025, 0x900ab, 0x80005, 0x80085, 0x80045, 0x900eb, 0x70106, 0x8005d, 0x8001d, 0x9009b, 0x70116, 0x8007d, 0x8003d, 0x900db, 0x7010e, 0x8006d, 0x8002d, 0x900bb, 0x8000d, 0x8008d, 0x8004d, 0x900fb, 0x70101, 0x80053, 0x80013, 0x8011b, 0x70111, 0x80073, 0x80033, 0x900c7, 0x70109, 0x80063, 0x80023, 0x900a7, 0x80003, 0x80083, 0x80043, 0x900e7, 0x70105, 0x8005b, 0x8001b, 0x90097, 0x70115, 0x8007b, 0x8003b, 0x900d7, 0x7010d, 0x8006b, 0x8002b, 0x900b7, 0x8000b, 0x8008b, 0x8004b, 0x900f7, 0x70103, 0x80057, 0x80017, 0x8011f, 0x70113, 0x80077, 0x80037, 0x900cf, 0x7010b, 0x80067, 0x80027, 0x900af, 0x80007, 0x80087, 0x80047, 0x900ef, 0x70107, 0x8005f, 0x8001f, 0x9009f, 0x70117, 0x8007f, 0x8003f, 0x900df, 0x7010f, 0x8006f, 0x8002f, 0x900bf, 0x8000f, 0x8008f, 0x8004f, 0x900ff]), 9];
 const fixedDistCodeTab = [new Int32Array([0x50000, 0x50010, 0x50008, 0x50018, 0x50004, 0x50014, 0x5000c, 0x5001c, 0x50002, 0x50012, 0x5000a, 0x5001a, 0x50006, 0x50016, 0x5000e, 0x00000, 0x50001, 0x50011, 0x50009, 0x50019, 0x50005, 0x50015, 0x5000d, 0x5001d, 0x50003, 0x50013, 0x5000b, 0x5001b, 0x50007, 0x50017, 0x5000f, 0x00000]), 5];
 class FlateStream extends DecodeStream {
+  static #MIN_ASYNC_COMPRESSED_LENGTH = 1024;
   #isAsync = true;
   constructor(str, maybeLength) {
     super(maybeLength);
     this.stream = str;
     this.dict = str.dict;
+    if (str instanceof Stream && str.length < FlateStream.#MIN_ASYNC_COMPRESSED_LENGTH) {
+      assert(!str.isAsync, "Stream sub-classes are never asynchronous");
+      this.#isAsync = false;
+    }
     const cmf = str.getByte();
     const flg = str.getByte();
     if (cmf === -1 || flg === -1) {
@@ -10602,6 +10616,7 @@ class JpxStream extends DecodeStream {
 
 ;// ./src/core/lzw_stream.js
 
+
 class LZWStream extends DecodeStream {
   constructor(str, maybeLength, earlyChange) {
     super(maybeLength);
@@ -10620,9 +10635,7 @@ class LZWStream extends DecodeStream {
       currentSequence: new Uint8Array(maxLzwDictionarySize),
       currentSequenceLength: 0
     };
-    for (let i = 0; i < 256; ++i) {
-      lzwState.dictionaryValues[i] = i;
-    }
+    lzwState.dictionaryValues.set(Util.identity0to256Map, 0);
     this.lzwState = lzwState;
   }
   readBits(n) {
@@ -11227,48 +11240,18 @@ class Parser {
         break;
       }
     }
-    const length = stream.pos - startPos;
-    if (b === -1) {
-      warn("Inline DCTDecode image stream: " + "EOI marker not found, searching for /EI/ instead.");
-      stream.skip(-length);
-      return this.findDefaultInlineStreamEnd(stream);
-    }
-    this.inlineStreamSkipEI(stream);
-    return length;
+    return this.inlineStreamSkipEI(stream, startPos, b, "DCTDecode");
   }
   findASCII85DecodeInlineStreamEnd(stream) {
-    const TILDE = 0x7e,
-      GT = 0x3e;
+    const TILDE = 0x7e;
     const startPos = stream.pos;
     let ch;
     while ((ch = stream.getByte()) !== -1) {
       if (ch === TILDE) {
-        const tildePos = stream.pos;
-        ch = stream.peekByte();
-        while (isWhiteSpace(ch)) {
-          stream.skip();
-          ch = stream.peekByte();
-        }
-        if (ch === GT) {
-          stream.skip();
-          break;
-        }
-        if (stream.pos > tildePos) {
-          const maybeEI = stream.peekBytes(2);
-          if (maybeEI[0] === 0x45 && maybeEI[1] === 0x49) {
-            break;
-          }
-        }
+        break;
       }
     }
-    const length = stream.pos - startPos;
-    if (ch === -1) {
-      warn("Inline ASCII85Decode image stream: " + "EOD marker not found, searching for /EI/ instead.");
-      stream.skip(-length);
-      return this.findDefaultInlineStreamEnd(stream);
-    }
-    this.inlineStreamSkipEI(stream);
-    return length;
+    return this.inlineStreamSkipEI(stream, startPos, ch, "ASCII85Decode");
   }
   findASCIIHexDecodeInlineStreamEnd(stream) {
     const GT = 0x3e;
@@ -11279,20 +11262,19 @@ class Parser {
         break;
       }
     }
+    return this.inlineStreamSkipEI(stream, startPos, ch, "ASCIIHexDecode");
+  }
+  inlineStreamSkipEI(stream, startPos, ch, name) {
     const length = stream.pos - startPos;
     if (ch === -1) {
-      warn("Inline ASCIIHexDecode image stream: " + "EOD marker not found, searching for /EI/ instead.");
+      const type = name === "DCTDecode" ? "EOI" : "EOD";
+      warn(`Inline ${name} image stream: ${type} marker not found, searching for /EI/ instead.`);
       stream.skip(-length);
       return this.findDefaultInlineStreamEnd(stream);
     }
-    this.inlineStreamSkipEI(stream);
-    return length;
-  }
-  inlineStreamSkipEI(stream) {
     const E = 0x45,
       I = 0x49;
-    let state = 0,
-      ch;
+    let state = 0;
     while ((ch = stream.getByte()) !== -1) {
       if (state === 0) {
         state = ch === E ? 1 : 0;
@@ -11302,6 +11284,7 @@ class Parser {
         break;
       }
     }
+    return length;
   }
   makeInlineImage(cipherTransform) {
     const lexer = this.lexer;
@@ -17433,7 +17416,19 @@ class DataBuilder {
 
 
 const MAX_SUBR_NESTING = 10;
+const MAX_CHARSTRING_TOKENS = 64 * 1024 * 1024;
+const MAX_STACK_SIZE = 48;
 const MAX_FD_ARRAY_COUNT = 256;
+function removeCharStringByte(cursor, data, pos) {
+  const {
+    readStart
+  } = cursor;
+  if (pos > readStart) {
+    data.copyWithin(cursor.writePos, readStart, pos);
+    cursor.writePos += pos - readStart;
+  }
+  cursor.readStart = pos + 1;
+}
 function looksLikeUnsigned16BitNegative(coord) {
   return coord > 0x7fff && coord <= 0xffff;
 }
@@ -17890,12 +17885,34 @@ class CFFParser {
     if (!data || state.callDepth > MAX_SUBR_NESTING) {
       return false;
     }
+    const cursor = {
+      readStart: 0,
+      writePos: 0
+    };
+    try {
+      return this.#parseCharString(state, data, localSubrIndex, globalSubrIndex, cursor);
+    } finally {
+      const {
+        readStart,
+        writePos
+      } = cursor;
+      if (readStart > 0) {
+        data.copyWithin(writePos, readStart);
+        data.fill(14, data.length - readStart + writePos);
+      }
+    }
+  }
+  #parseCharString(state, data, localSubrIndex, globalSubrIndex, cursor) {
     const view = new DataView(data.buffer, data.byteOffset, data.bytesLength);
     let stackSize = state.stackSize;
     const stack = state.stack;
-    let length = data.length;
+    const length = data.length;
     for (let j = 0; j < length;) {
       const value = data[j++];
+      if (++state.tokens > MAX_CHARSTRING_TOKENS || stackSize > MAX_STACK_SIZE) {
+        warn("Charstring exceeds the execution limits.");
+        return false;
+      }
       let validationCommand = null;
       if (value === 12) {
         const q = data[j++];
@@ -17933,9 +17950,7 @@ class CFFParser {
       } else if (value === 19 || value === 20) {
         state.hints += stackSize >> 1;
         if (state.hints === 0) {
-          data.copyWithin(j - 1, j, -1);
-          j -= 1;
-          length -= 1;
+          removeCharStringByte(cursor, data, j - 1);
           continue;
         }
         j += state.hints + 7 >> 3;
@@ -17976,9 +17991,7 @@ class CFFParser {
         data[j - 1] = 14;
         validationCommand = CharstringValidationData[14];
       } else if (value === 9) {
-        data.copyWithin(j - 1, j, -1);
-        j -= 1;
-        length -= 1;
+        removeCharStringByte(cursor, data, j - 1);
         continue;
       } else {
         validationCommand = CharstringValidationData[value];
@@ -18023,9 +18036,6 @@ class CFFParser {
         }
       }
     }
-    if (length < data.length) {
-      data.fill(14, length);
-    }
     state.stackSize = stackSize;
     return true;
   }
@@ -18044,6 +18054,7 @@ class CFFParser {
       const charstring = charStrings.get(i);
       const state = {
         callDepth: 0,
+        tokens: 0,
         stackSize: 0,
         stack: [],
         hints: 0,
@@ -24888,7 +24899,12 @@ class OpenTypeFileBuilder {
 
 
 
+
 const HINTING_ENABLED = false;
+const type1_parser_MAX_SUBR_NESTING = 16;
+const type1_parser_MAX_CHARSTRING_TOKENS = 64 * 1024 * 1024;
+const type1_parser_MAX_STACK_SIZE = 48;
+const MAX_CHARSTRING_LENGTH = 65535;
 const COMMAND_MAP = {
   hstem: [1],
   vstem: [3],
@@ -24912,11 +24928,18 @@ class Type1CharString {
   flexing = false;
   output = [];
   stack = [];
-  convert(encoded, subrs, seacAnalysisEnabled) {
+  tokens = 0;
+  convert(encoded, subrs, seacAnalysisEnabled, depth = 0) {
+    if (depth > type1_parser_MAX_SUBR_NESTING) {
+      return true;
+    }
     const count = encoded.length;
     let error = false;
     let wx, sbx, subrNumber;
     for (let i = 0; i < count; i++) {
+      if (++this.tokens > type1_parser_MAX_CHARSTRING_TOKENS || this.stack.length > type1_parser_MAX_STACK_SIZE) {
+        return true;
+      }
       let value = encoded[i];
       if (value < 32) {
         if (value === 12) {
@@ -24974,7 +24997,7 @@ class Type1CharString {
               error = true;
               break;
             }
-            error = this.convert(subrs[subrNumber], subrs, seacAnalysisEnabled);
+            error = this.convert(subrs[subrNumber], subrs, seacAnalysisEnabled, depth + 1);
             break;
           case 11:
             return error;
@@ -24992,6 +25015,7 @@ class Type1CharString {
             break;
           case 14:
             this.output.push(COMMAND_MAP.endchar[0]);
+            error = this.output.length > MAX_CHARSTRING_LENGTH;
             break;
           case 21:
             if (this.flexing) {
@@ -25126,7 +25150,7 @@ class Type1CharString {
     } else {
       this.stack.length = 0;
     }
-    return false;
+    return this.output.length > MAX_CHARSTRING_LENGTH;
   }
 }
 const EEXEC_ENCRYPT_KEY = 55665;
@@ -25162,22 +25186,21 @@ function decryptAscii(data, key, discardNumber) {
   const count = data.length,
     maybeLength = count >>> 1;
   const decrypted = new Uint8Array(maybeLength);
+  let digit1 = -1;
   let i, j;
   for (i = 0, j = 0; i < count; i++) {
-    const digit1 = data[i];
-    if (!isHexDigit(digit1)) {
+    const digit = toHexDigit(data[i]);
+    if (digit < 0) {
       continue;
     }
-    i++;
-    let digit2;
-    while (i < count && !isHexDigit(digit2 = data[i])) {
-      i++;
+    if (digit1 < 0) {
+      digit1 = digit;
+      continue;
     }
-    if (i < count) {
-      const value = parseInt(String.fromCharCode(digit1, digit2), 16);
-      decrypted[j++] = value ^ r >> 8;
-      r = (value + r) * c1 + c2 & (1 << 16) - 1;
-    }
+    const value = digit1 << 4 | digit;
+    digit1 = -1;
+    decrypted[j++] = value ^ r >> 8;
+    r = (value + r) * c1 + c2 & (1 << 16) - 1;
   }
   return decrypted.slice(discardNumber, j);
 }
@@ -25523,15 +25546,15 @@ class Type1Parser {
       let digit1 = -1,
         j = 0;
       for (let i = 0, ii = binary.length; i < ii && j < startDataLength; i++) {
-        const digit = binary[i];
-        if (!isHexDigit(digit)) {
+        const digit = toHexDigit(binary[i]);
+        if (digit < 0) {
           continue;
         }
         if (digit1 < 0) {
           digit1 = digit;
           continue;
         }
-        decoded[j++] = parseInt(String.fromCharCode(digit1, digit), 16);
+        decoded[j++] = digit1 << 4 | digit;
         digit1 = -1;
       }
       if (j !== startDataLength) {
@@ -25967,6 +25990,7 @@ class Type1Font {
 }
 
 ;// ./src/core/fonts.js
+
 
 
 
@@ -27065,7 +27089,7 @@ class Font {
       }
       throw new FormatError(`TrueType Collection does not contain "${fontName}" font.`);
     }
-    function readCmapTable(cmap, file, isSymbolicFont, hasEncoding) {
+    function readCmapTable(cmap, file, isSymbolicFont, hasEncoding, numGlyphs) {
       if (!cmap) {
         warn("No cmap table available.");
         return {
@@ -27261,13 +27285,16 @@ class Font {
           });
         }
       } else if (format === 12) {
-        file.skip(2 + 4 + 4);
-        const nGroups = file.getInt32() >>> 0;
-        for (j = 0; j < nGroups; j++) {
+        file.skip(2);
+        const length = file.getInt32() >>> 0;
+        file.skip(4);
+        const nGroups = MathClamp(file.getInt32() >>> 0, 0, Math.min((length - 16) / 12 | 0, (file.end - file.pos) / 12 | 0));
+        for (j = 0; j < nGroups && mappings.length <= 0x110000; j++) {
           const startCharCode = file.getInt32() >>> 0;
           const endCharCode = file.getInt32() >>> 0;
           let glyphCode = file.getInt32() >>> 0;
-          for (let charCode = startCharCode; charCode <= endCharCode; charCode++) {
+          const lastCharCode = glyphCode < numGlyphs ? Math.min(endCharCode, startCharCode + (numGlyphs - glyphCode - 1), 0x10ffff) : startCharCode - 1;
+          for (let charCode = startCharCode; charCode <= lastCharCode; charCode++) {
             mappings.push({
               charCode,
               glyphId: glyphCode++
@@ -28171,7 +28198,7 @@ class Font {
         }
       });
     } else {
-      const cmapTable = readCmapTable(tables.cmap, font, this.isSymbolicFont, properties.hasEncoding);
+      const cmapTable = readCmapTable(tables.cmap, font, this.isSymbolicFont, properties.hasEncoding, numGlyphs);
       const cmapPlatformId = cmapTable.platformId;
       const cmapEncodingId = cmapTable.encodingId;
       const cmapMappings = cmapTable.mappings;
@@ -28374,6 +28401,9 @@ class Font {
     builder.addTable("cmap", createCmapTable(newCharCodeToGlyphId, toUnicodeExtraMap, numGlyphs));
     builder.addTable("head", function fontTableHead() {
       const dateArr = [0x00, 0x00, 0x00, 0x00, 0x9e, 0x0b, 0x7e, 0x27];
+      const bbox = font.cff?.topDict.getByName("FontBBox") ?? properties.bbox;
+      const xMin = Math.min(Math.floor(bbox?.[0] || 0), 0);
+      const xMax = Math.max(Math.ceil(bbox?.[2] || 0), 0x0fff);
       const head = new DataBuilder({
         exactLength: 54
       });
@@ -28385,9 +28415,9 @@ class Font {
       head.setSafeInt16(unitsPerEm);
       head.setArray(dateArr);
       head.setArray(dateArr);
-      head.skip(2);
+      head.setSafeInt16(xMin);
       head.setSafeInt16(properties.descent);
-      head.setArray([0x0f, 0xff]);
+      head.setSafeInt16(xMax);
       head.setSafeInt16(properties.ascent);
       head.setInt16(properties.italicAngle ? 2 : 0);
       head.setArray([0x00, 0x11]);
@@ -29390,7 +29420,7 @@ function _evalUnaryConst(op, v) {
       return undefined;
   }
 }
-const MAX_STACK_SIZE = 100;
+const ast_MAX_STACK_SIZE = 100;
 const MAX_WORK = 100_000;
 const MAX_FORK_DEPTH = 1000;
 const MAX_TREE_DEPTH = 500;
@@ -29432,7 +29462,7 @@ class PSStackToTree {
     this._failed = false;
     this._work = 0;
     this._forkDepth = 0;
-    if (numInputs > MAX_STACK_SIZE) {
+    if (numInputs > ast_MAX_STACK_SIZE) {
       return null;
     }
     const stack = [];
@@ -29494,7 +29524,7 @@ class PSStackToTree {
       switch (instr.type) {
         case PS_NODE.number:
           stack.push(new PsConstNode(instr.value));
-          if (stack.length > MAX_STACK_SIZE) {
+          if (stack.length > ast_MAX_STACK_SIZE) {
             this._failed = true;
           }
           break;
@@ -29620,13 +29650,13 @@ class PSStackToTree {
     switch (op) {
       case TOKEN.true:
         stack.push(new PsConstNode(true));
-        if (stack.length > MAX_STACK_SIZE) {
+        if (stack.length > ast_MAX_STACK_SIZE) {
           this._failed = true;
         }
         break;
       case TOKEN.false:
         stack.push(new PsConstNode(false));
-        if (stack.length > MAX_STACK_SIZE) {
+        if (stack.length > ast_MAX_STACK_SIZE) {
           this._failed = true;
         }
         break;
@@ -29636,7 +29666,7 @@ class PSStackToTree {
           break;
         }
         stack.push(stack.at(-1));
-        if (stack.length > MAX_STACK_SIZE) {
+        if (stack.length > ast_MAX_STACK_SIZE) {
           this._failed = true;
         }
         break;
@@ -29671,7 +29701,7 @@ class PSStackToTree {
               this._failed = true;
             } else {
               stack.push(...stack.slice(-n));
-              if (stack.length > MAX_STACK_SIZE) {
+              if (stack.length > ast_MAX_STACK_SIZE) {
                 this._failed = true;
               }
             }
@@ -32382,10 +32412,7 @@ function bidi(str, startLevel = -1, vertical = false) {
       startLevel = 1;
     }
   }
-  const levels = [];
-  for (i = 0; i < strLength; ++i) {
-    levels[i] = startLevel;
-  }
+  const levels = new Array(strLength).fill(startLevel);
   const e = isOdd(startLevel) ? "R" : "L";
   const sor = e;
   const eor = sor;
@@ -37520,6 +37547,8 @@ class TranslatedFont {
             if (!fontBBoxSize) {
               this.#guessType3FontBBox(operatorList);
             }
+            operatorList.fnArray.splice(1, 0, OPS.setGState);
+            operatorList.argsArray.splice(1, 0, [[["ca", 1], ["CA", 1]]]);
             break;
         }
         charProcOperatorList.set(key, operatorList.getIR());
@@ -56810,9 +56839,11 @@ function calculateMD5(data, offset, length) {
   const paddedLength = length + 72 & ~63;
   const padded = new Uint8Array(paddedLength),
     view = new DataView(padded.buffer);
-  let i, j;
-  for (i = 0; i < length; ++i) {
-    padded[i] = data[offset++];
+  let i = 0,
+    j;
+  if (length > 0) {
+    padded.set(data.subarray(offset, offset + length), i);
+    i += length;
   }
   padded[i++] = 0x80;
   const n = paddedLength - 8;
@@ -57219,9 +57250,11 @@ function calculateSHA512(data, offset, length, mode384 = false) {
   const paddedLength = Math.ceil((length + 17) / 128) * 128;
   const padded = new Uint8Array(paddedLength),
     view = new DataView(padded.buffer);
-  let i, j;
-  for (i = 0; i < length; ++i) {
-    padded[i] = data[offset++];
+  let i = 0,
+    j;
+  if (length > 0) {
+    padded.set(data.subarray(offset, offset + length), i);
+    i += length;
   }
   padded[i++] = 0x80;
   const n = paddedLength - 16;
@@ -57376,9 +57409,11 @@ function calculateSHA256(data, offset, length) {
   const paddedLength = Math.ceil((length + 9) / 64) * 64;
   const padded = new Uint8Array(paddedLength),
     view = new DataView(padded.buffer);
-  let i, j;
-  for (i = 0; i < length; ++i) {
-    padded[i] = data[offset++];
+  let i = 0,
+    j;
+  if (length > 0) {
+    padded.set(data.subarray(offset, offset + length), i);
+    i += length;
   }
   padded[i++] = 0x80;
   const n = paddedLength - 8;
@@ -57496,9 +57531,7 @@ class ARCFourCipher {
   a = 0;
   b = 0;
   constructor(key) {
-    const s = Uint8Array.from({
-      length: 256
-    }, (_, i) => i);
+    const s = Util.identity0to256Map.slice();
     const keyLength = key.length;
     for (let i = 0, j = 0; i < 256; ++i) {
       const tmp = s[i];
@@ -58197,9 +58230,10 @@ class CipherTransformFactory {
     let strf = Name.get("Identity");
     let eff = stmf;
     if (algorithm >= 4) {
-      cf = dict.get("CF");
-      if (cf instanceof Dict) {
-        cf.suppressEncryption = true;
+      const cfDict = dict.get("CF");
+      if (cfDict instanceof Dict) {
+        cfDict.suppressEncryption = true;
+        cf = cfDict;
       }
       stmf = dict.get("StmF") || Name.get("Identity");
       strf = dict.get("StrF") || Name.get("Identity");
@@ -58286,7 +58320,7 @@ class CipherTransformFactory {
         if (!(filterName instanceof Name)) {
           throw new FormatError("Invalid crypt filter name.");
         }
-        const cryptFilter = this.cf.get(filterName.name);
+        const cryptFilter = this.cf?.get(filterName.name);
         const cfm = cryptFilter?.get("CFM");
         if (!cfm || cfm.name === "None") {
           return NullCipher;
@@ -64527,7 +64561,7 @@ class WorkerMessageHandler {
       docId,
       apiVersion
     } = docParams;
-    const workerVersion = "6.5.260";
+    const workerVersion = "6.5.334";
     if (apiVersion !== workerVersion) {
       throw new Error(`The API version "${apiVersion}" does not match the Worker version "${workerVersion}".`);
     }

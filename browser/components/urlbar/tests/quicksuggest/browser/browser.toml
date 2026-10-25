@@ -24,8 +24,6 @@ prefs = [
 
 ["browser_quicksuggest_configuration.js"]
 
-["browser_quicksuggest_contextual_optin.js"]
-
 ["browser_quicksuggest_dynamicSuggestions.js"]
 
 ["browser_quicksuggest_indexes.js"]
@@ -64,6 +62,9 @@ support-files = [
 ]
 
 ["browser_quicksuggest_temporal.js"]
+
+["browser_quicksuggest_temporal_zeroPrefixLayout.js"]
+support-files = ["../../../../search/test/browser/trendingSuggestionEngine.sjs"]
 
 ["browser_quicksuggest_yelp.js"]
 

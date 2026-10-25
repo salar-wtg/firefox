@@ -674,6 +674,31 @@ smart_window:
           True when this response (success or failure) was produced by a
           user-initiated retry of a previous turn
 
+  time_to_first_character:
+    type: event
+    description: |
+      Recorded when the first character of an assistant response is rendered
+      after a chat request is submitted
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2073242
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=2073242
+    data_sensitivity:
+      - interaction
+    notification_emails: *emails
+    expires: never
+    extra_keys:
+      location: *location
+      chat_id: *chat_id
+      message_seq: *message_seq
+      request_id: *request_id
+      model: *model
+      latency:
+        type: quantity
+        unit: ms
+        description: >
+          Time from response request start to the first rendered assistant character
+
   client_error:
     type: event
     description: |
@@ -2515,8 +2540,13 @@ smart_window:
         type: string
         description: >
           One of the monitor run error codes: network_error, timeout,
-          rate_limit, auth_error, content_extraction_error, canceled,
-          interrupted, model_error, prompt_load_error or unknown_error.
+          budget_exceeded, rate_limit, request_too_large, max_users_reached,
+          upstream_rate_limit, fastly_rate_limit, request_blocked,
+          invalid_model, invalid_request, global_budget_exceeded,
+          guest_budget_exceeded, max_guests_reached,
+          auth_error, content_extraction_error,
+          canceled, interrupted, model_error, prompt_load_error or
+          unknown_error.
           Only present when success is false. Never a free-form message.
       outcome:
         type: boolean

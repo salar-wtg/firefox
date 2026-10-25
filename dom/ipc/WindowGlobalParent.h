@@ -280,7 +280,7 @@ class WindowGlobalParent final : public WindowContext,
 
   uint32_t HttpsOnlyStatus() { return mHttpsOnlyStatus; }
 
-  void AddSecurityState(uint32_t aStateFlags);
+  void ApplySecurityStateToTop(uint32_t aStateFlags);
   uint32_t GetSecurityFlags() { return mSecurityState; }
 
   const RemoteType& GetRemoteType() const override;
@@ -309,6 +309,10 @@ class WindowGlobalParent final : public WindowContext,
   // loaded, if known.
   already_AddRefed<nsIChannel> GetFailedChannel();
 
+  // The LoadingSessionHistoryInfo::mLoadId of the parent process load which
+  // produced this document, or 0 if there was none.
+  uint64_t DocumentHistoryLoadId() const { return mDocumentHistoryLoadId; }
+
   dom::NoCorsMediaRequestState NoCorsMediaRequestState(nsIURI* aURI);
 
   void RecordSubsequentNoCorsRequestState(nsIURI* aURI);
@@ -325,6 +329,7 @@ class WindowGlobalParent final : public WindowContext,
       const MaybeDiscarded<dom::BrowsingContext>& aTargetBC,
       nsDocShellLoadState* aLoadState, bool aSetNavigating);
   mozilla::ipc::IPCResult RecvInternalLoad(nsDocShellLoadState* aLoadState);
+  mozilla::ipc::IPCResult RecvAddSecurityState(uint32_t aStateFlags);
   mozilla::ipc::IPCResult RecvUpdateDocumentURI(NotNull<nsIURI*> aURI);
   mozilla::ipc::IPCResult RecvUpdateDocumentPrincipal(
       nsIPrincipal* aNewDocumentPrincipal,
@@ -567,6 +572,8 @@ class WindowGlobalParent final : public WindowContext,
   // The failed parent process channel which led to an error page load.
   // May not match the channel in the content process in some cases.
   nsCOMPtr<nsIChannel> mFailedChannel;
+
+  uint64_t mDocumentHistoryLoadId = 0;
 
   uint32_t mSandboxFlags;
 

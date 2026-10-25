@@ -11,6 +11,7 @@
 #include "mozilla/WidgetUtils.h"
 #include "mozilla/gfx/DrawEventRecorder.h"
 #include "mozilla/gfx/HelpersCairo.h"
+#include "mozilla/gfx/HelpersSkia.h"
 #include "mozilla/gfx/InlineTranslator.h"
 #include "nsCoord.h"
 #include "nsIContentAnalysis.h"
@@ -19,21 +20,28 @@
 #include "nsPIDOMWindow.h"
 #include "nsServiceManagerUtils.h"
 #include "nsString.h"
+#include "skia/include/core/SkCanvas.h"
 
 namespace mozilla {
 namespace gfx {
 
-PrintTargetWindows::PrintTargetWindows(cairo_surface_t* aCairoSurface,
-                                       const IntSize& aSize, HDC aDC)
-    : PrintTarget(aCairoSurface, aSize), mDC(aDC) {
+PrintTargetWindows::PrintTargetWindows(cairo_surface_t* aCairoSurface, HDC aDC)
+    : mDC(aDC), mCairoSurface(aCairoSurface) {
+  MOZ_ASSERT(aCairoSurface);
+  // CreateOrNull hands over ownership of aCairoSurface, so we don't call
+  // cairo_surface_reference(aSurface) here.
+  // This code was copied from gfxASurface::Init:
+  if (cairo_surface_get_content(mCairoSurface) != CAIRO_CONTENT_COLOR) {
+    cairo_surface_set_subpixel_antialiasing(
+        mCairoSurface, CAIRO_SUBPIXEL_ANTIALIASING_DISABLED);
+  }
   // TODO: At least add basic memory reporting.
   // 4 * mSize.width * mSize.height + sizeof(PrintTargetWindows) ?
 }
 
 PrintTargetWindows::PrintTargetWindows(
-    std::unique_ptr<SkGDI::Document> aDocument, const IntSize& aSize, HDC aDC)
-    : PrintTarget(/* not using cairo_surface_t */ nullptr, aSize),
-      mDC(aDC),
+    std::unique_ptr<SkGDI::Document> aDocument, HDC aDC)
+    : mDC(aDC),
       mDocument(std::move(aDocument)),
       mRecorder(MakeRefPtr<DrawEventRecorderMemory>()) {
   // Printing always records with glyph source text, since the content
@@ -47,13 +55,26 @@ PrintTargetWindows::PrintTargetWindows(
   mTranslator = MakeUnique<InlineTranslator>(refDT);
 }
 
-PrintTargetWindows::~PrintTargetWindows() = default;
+PrintTargetWindows::~PrintTargetWindows() {
+  if (mCairoSurface) {
+    cairo_surface_destroy(mCairoSurface);
+  }
+}
+
+void PrintTargetWindows::Finish() {
+  if (mIsFinished) {
+    return;
+  }
+  mIsFinished = true;
+  if (mCairoSurface) {
+    cairo_surface_finish(mCairoSurface);
+  }
+}
 
 /* static */
 already_AddRefed<PrintTargetWindows> PrintTargetWindows::CreateOrNull(HDC aDC) {
-  // Figure out the paper size, the actual surface size will be the printable
-  // area which is likely smaller, but the size here is later used to create the
-  // draw target where the full page size is needed.
+  // Sanity-check the paper size, the actual surface size will be the printable
+  // area which is likely smaller.
   // Note: we only scale the printing using the LOGPIXELSY,
   // so we use that when calculating the surface width as well as the height.
   int32_t heightDPI = ::GetDeviceCaps(aDC, LOGPIXELSY);
@@ -77,7 +98,7 @@ already_AddRefed<PrintTargetWindows> PrintTargetWindows::CreateOrNull(HDC aDC) {
     if (!doc) {
       return nullptr;
     }
-    return do_AddRef(new PrintTargetWindows(std::move(doc), size, aDC));
+    return do_AddRef(new PrintTargetWindows(std::move(doc), aDC));
   }
 
   cairo_surface_t* surface = cairo_win32_printing_surface_create(aDC);
@@ -87,8 +108,7 @@ already_AddRefed<PrintTargetWindows> PrintTargetWindows::CreateOrNull(HDC aDC) {
   }
 
   // The new object takes ownership of our surface reference.
-  RefPtr<PrintTargetWindows> target =
-      new PrintTargetWindows(surface, size, aDC);
+  RefPtr<PrintTargetWindows> target = new PrintTargetWindows(surface, aDC);
 
   return target.forget();
 }
@@ -203,12 +223,8 @@ nsresult PrintTargetWindows::EndPage() {
     mTranslator->SaveState(pageStart);
     MemStream& recording = mRecorder->mOutputStream;
     bool firstPass = true;
-    mDocument->drawPage(size, [&](SkCanvas* aCanvas, SkIPoint aOrigin) {
+    mDocument->drawPage(size, [&](SkCanvas* aCanvas) {
       RefPtr<DrawTarget> dt = Factory::CreateDrawTargetWithSkCanvas(aCanvas);
-      if (dt && (aOrigin.x() || aOrigin.y())) {
-        dt = Factory::CreateOffsetDrawTarget(
-            dt, IntPoint(aOrigin.x(), aOrigin.y()));
-      }
       if (!dt || !recording.mValid) {
         failure = true;
         return;
@@ -217,6 +233,12 @@ nsresult PrintTargetWindows::EndPage() {
         mTranslator->RestoreState(pageStart);
       }
       firstPass = false;
+      // The canvas may be transformed (e.g. to rasterize part of the page),
+      // and the recording sets absolute transforms.
+      const Matrix baseTransform =
+          SkiaMatrixToGfxMatrix(aCanvas->getTotalMatrix()).As2D();
+      dt->SetTransform(baseTransform);
+      mTranslator->SetReferenceDrawTargetTransform(baseTransform);
       mTranslator->SetBaseDrawTarget(dt);
       if (!mTranslator->TranslateRecording(recording.mData,
                                            recording.mLength)) {
@@ -228,6 +250,7 @@ nsresult PrintTargetWindows::EndPage() {
     // reference DTs across pages.
     mTranslator->ForgetDrawTargets();
     RefPtr<DrawTarget> refDT = GetReferenceDrawTarget();
+    mTranslator->SetReferenceDrawTargetTransform(Matrix());
     mTranslator->SetBaseDrawTarget(refDT);
     mRecorder->WipeRecording();
   } else {
@@ -241,23 +264,57 @@ nsresult PrintTargetWindows::EndPage() {
 
 already_AddRefed<DrawTarget> PrintTargetWindows::MakeDrawTarget(
     const IntSize& aSize, DrawEventRecorder* aRecorder) {
-  if (!mDocument || aRecorder) {
-    return PrintTarget::MakeDrawTarget(aSize, aRecorder);
-  }
+  // This should not be called outside of BeginPage()/EndPage() calls since
+  // some backends can only provide a valid DrawTarget at that time.
   MOZ_ASSERT(mHasActivePage, "We can't guarantee a valid DrawTarget");
-  RefPtr<DrawTarget> refDT = GetReferenceDrawTarget();
-  return Factory::CreateRecordingDrawTarget(mRecorder, refDT,
+
+  RefPtr<DrawTarget> dt;
+  if (mDocument) {
+    RefPtr<DrawTarget> refDT = GetReferenceDrawTarget();
+    dt = Factory::CreateRecordingDrawTarget(mRecorder, refDT,
                                             IntRect(IntPoint(), aSize));
+  } else {
+    if (cairo_surface_status(mCairoSurface)) {
+      return nullptr;
+    }
+    // Note than aSize may not be the same as the size of mCairoSurface. If the
+    // sizes are different a clip will be applied to mCairoSurface.
+    dt = Factory::CreateDrawTargetForCairoSurface(mCairoSurface, aSize);
+  }
+  if (!dt || !dt->IsValid()) {
+    return nullptr;
+  }
+  if (aRecorder) {
+    return CreateRecordingDrawTarget(aRecorder, dt);
+  }
+  return dt.forget();
 }
 
 already_AddRefed<DrawTarget> PrintTargetWindows::GetReferenceDrawTarget() {
-  if (!mDocument) {
-    return PrintTarget::GetReferenceDrawTarget();
+  if (mRefDT) {
+    return do_AddRef(mRefDT);
   }
-  if (!mRefDT) {
-    mRefDT = Factory::CreateDrawTarget(BackendType::SKIA, IntSize(1, 1),
+  const IntSize size(1, 1);
+  if (mDocument) {
+    mRefDT = Factory::CreateDrawTarget(BackendType::SKIA, size,
                                        SurfaceFormat::B8G8R8A8);
+    return do_AddRef(mRefDT);
   }
+
+  cairo_surface_t* similar = cairo_surface_create_similar(
+      mCairoSurface, cairo_surface_get_content(mCairoSurface), size.width,
+      size.height);
+  if (cairo_surface_status(similar)) {
+    return nullptr;
+  }
+  RefPtr<DrawTarget> dt =
+      Factory::CreateDrawTargetForCairoSurface(similar, size);
+  // The DT addrefs the surface, so we need drop our own reference to it:
+  cairo_surface_destroy(similar);
+  if (!dt || !dt->IsValid()) {
+    return nullptr;
+  }
+  mRefDT = std::move(dt);
   return do_AddRef(mRefDT);
 }
 

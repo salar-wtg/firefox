@@ -1391,16 +1391,26 @@ export class UrlbarInputBaseTestUtils {
       !expectedSearchMode.isPreview &&
       this.isPopupOpen(window)
     ) {
+      let historyInSearchMode = lazy.UrlbarPrefs.get(
+        "unifiedSearchButton.historyInSearchMode"
+      );
       let resultCount = this.getResultCount(window);
       for (let i = 0; i < resultCount; i++) {
         let result = await this.getDetailsOfResultAt(window, i);
         if (result.source == UrlbarShared.RESULT_SOURCE.SEARCH) {
-          this.Assert.equal(
-            expectedSearchMode.engineName,
-            result.searchParams.engine,
-            "Search mode result matches engine name."
-          );
-        } else {
+          // With historyInSearchMode, results offering to switch to another
+          // engine's search mode, like search shortcuts, can show too.
+          if (
+            !historyInSearchMode ||
+            !result.result.payload.providesSearchMode
+          ) {
+            this.Assert.equal(
+              expectedSearchMode.engineName,
+              result.searchParams.engine,
+              "Search mode result matches engine name."
+            );
+          }
+        } else if (!historyInSearchMode) {
           let engine = lazy.SearchService.getEngineByName(
             expectedSearchMode.engineName
           );
@@ -1686,9 +1696,11 @@ export class UrlbarInputBaseTestUtils {
     // controller (the child owns construction; the actor only resolves the
     // chrome window). It is exposed as `controller.parentController`.
     parentOptions.input.browserWindow.windowGlobalChild = {
-      getActor: () => ({
-        browsingContext: { topChromeWindow: browserWindow },
-      }),
+      parentActor: {
+        getActor: () => ({
+          browsingContext: { topChromeWindow: browserWindow },
+        }),
+      },
     };
     // A provided `manager` stands in for the per-sap `ProvidersManager` the
     // child-built parent controller resolves at construction. Swap it in for the

@@ -67,6 +67,7 @@
 #include "mozilla/GeckoTrace.h"
 #include "mozilla/InitializedOnce.h"
 #include "mozilla/Logging.h"
+#include "mozilla/MathAlgorithms.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/NotNull.h"
@@ -8792,6 +8793,24 @@ uint64_t QuotaManager::LockedCollectOriginsForEviction(
   return helper->BlockAndReturnOriginsForEviction(aLocks);
 }
 
+void QuotaManager::LockedMaybeRecordTemporaryStorageUsageUnderflow(
+    StaticString aCallSite) {
+  mQuotaMutex.AssertCurrentThreadOwns();
+
+  if (mTemporaryStorageUsage >= 0) {
+    return;
+  }
+
+  if (!ThrottleCounter(mTemporaryStorageUsageUnderflowCount)) {
+    return;
+  }
+
+  glean::quotamanager::TemporaryStorageUsageUnderflowExtra extra;
+  extra.callSite.emplace(aCallSite);
+  extra.magnitude.emplace(FloorLog2(Abs(mTemporaryStorageUsage)));
+  glean::quotamanager::temporary_storage_usage_underflow.Record(Some(extra));
+}
+
 void QuotaManager::LockedRemoveQuotaForRepository(
     PersistenceType aPersistenceType) {
   mQuotaMutex.AssertCurrentThreadOwns();
@@ -9622,6 +9641,9 @@ Result<nsCString, nsresult> QuotaManager::EnsureStorageOriginFromOrigin(
       auto storageOrigin,
       mOriginToStorageOriginMap.TryLookupOrInsertWith(
           aOrigin, [this, &aOrigin]() -> Result<nsCString, nsresult> {
+            // Validate that the origin is well formed. Nothing of it is
+            // carried over into the storage origin, which is entirely
+            // synthesized below.
             OriginAttributes originAttributes;
 
             nsCString originNoSuffix;
@@ -9630,12 +9652,9 @@ Result<nsCString, nsresult> QuotaManager::EnsureStorageOriginFromOrigin(
 
             nsCOMPtr<nsIURI> uri;
             QM_TRY(MOZ_TO_RESULT(
-                NS_MutateURI(NS_STANDARDURLMUTATOR_CONTRACTID)
-                    .SetSpec(originNoSuffix)
-                    .SetScheme(kUUIDOriginScheme)
-                    .SetHost(NSID_TrimBracketsASCII(nsID::GenerateUUID()))
-                    .SetPort(-1)
-                    .Finalize(uri)));
+                NS_NewURI(getter_AddRefs(uri),
+                          kUUIDOriginScheme + "://"_ns +
+                              NSID_TrimBracketsASCII(nsID::GenerateUUID()))));
 
             nsCOMPtr<nsIPrincipal> principal =
                 BasePrincipal::CreateContentPrincipal(uri, OriginAttributes{});

@@ -1587,6 +1587,7 @@ Document::Document(const char* aContentType,
       mHasPolicyWithRequireTrustedTypesForDirective(false),
       mClipboardCopyTriggered(false),
       mHasBeenRevealed(false),
+      mRevealAfterBFCacheRestore(false),
       mSentMayHaveViewTransitionOptIn(false),
       mOutboundViewTransitionOptInDirty(false),
       mAutoSizesEnabled(StaticPrefs::dom_image_sizes_auto_enabled()),
@@ -2777,6 +2778,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(Document)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAutoSizeImageObserver)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mElementsObservedForLastRememberedSize)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRenderBlockingElementSet)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRenderBlockedSink)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mActiveEditContext)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDOMImplementation)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mImageMaps)
@@ -2904,6 +2906,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Document)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mAutoSizeImageObserver)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mElementsObservedForLastRememberedSize);
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mRenderBlockingElementSet);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mRenderBlockedSink);
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mActiveEditContext)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mFontFaceSet)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mPreviouslyFocusedContent)
@@ -9074,7 +9077,11 @@ void Document::EndLoad(bool aFireDOMContentLoadedSync) {
   // can flush it from FlushPendingNotifications as needed.  We might have to
   // do that to get a StartLayout() to happen.
   if (mParser) {
-    mWeakSink = do_GetWeakReference(mParser->GetContentSink());
+    nsIContentSink* sink = mParser->GetContentSink();
+    mWeakSink = do_GetWeakReference(sink);
+    if (IsRenderBlocked()) {
+      mRenderBlockedSink = sink;
+    }
     mParser = nullptr;
   }
 
@@ -12749,6 +12756,7 @@ void Document::Destroy() {
   SetDevToolsWatchingDOMMutations(false);
 
   mIsGoingAway = true;
+  mRenderBlockedSink = nullptr;
 
   if (mScriptLoader) {
     mScriptLoader->Destroy();
@@ -13092,6 +13100,7 @@ void Document::OnPageShow(bool aPersisted, EventTarget* aDispatchStartTarget,
       // We're coming out of bfcache, clear the revealed flag per
       // https://html.spec.whatwg.org/#reactivate-a-document 4.2.
       mHasBeenRevealed = false;
+      mRevealAfterBFCacheRestore = true;
       MaybeScheduleRenderingPhases({RenderingPhase::Reveal});
     }
 
@@ -16850,7 +16859,7 @@ void Document::HidePopoverStackUntil(Element* aEndpoint,
   Span<RefPtr<Element>> toRemain(popoverList.Elements(), lastHideIndex);
 
   // 5. For each popover of toHide: run the hide popover algorithm given
-  // popover, focusPreviousElement, fireEvents, false, and null.
+  // popover, focusPreviousElement, fireEvents, false, null, and document.
   for (RefPtr<Element> popover : mozilla::Reversed(toHide)) {
     HidePopover(*popover, aFocusPreviousElement, aFireEvents,
                 /* aSource */ nullptr, IgnoreErrors());
@@ -16867,7 +16876,7 @@ void Document::HidePopoverStackUntil(Element* aEndpoint,
       continue;
     }
     // 8.2. Run the hide popover algorithm given popover, focusPreviousElement,
-    // false, false, and null.
+    // false, false, null, and document.
     HidePopover(*popover, aFocusPreviousElement, /* aFireEvents */ false,
                 /* aSource */ nullptr, IgnoreErrors());
   }
@@ -16907,11 +16916,11 @@ void Document::HidePopover(Element& aPopover, bool aFocusPreviousElement,
   NS_ASSERTION(popoverHTMLEl, "Not a HTML element");
 
   // 1. Let validityResult be the result of running check popover validity
-  // given element, true, and null.
+  // given element, true, and expectedDocument.
   // 2. If validityResult is not true, then run cleanupSteps if throwExceptions
   // and throw, otherwise return.
   if (!popoverHTMLEl->CheckPopoverValidity(PopoverVisibilityState::Showing,
-                                           nullptr, aRv)) {
+                                           this, aRv)) {
     return;
   }
 
@@ -16937,12 +16946,8 @@ void Document::HidePopover(Element& aPopover, bool aFocusPreviousElement,
       if (!nestedHide) {
         popoverData->SetIsPopoverHiding(false);
       }
-      // 8.2. If element's popover close watcher is not null, then:
-      // 8.2.1. Destroy element's popover close watcher.
-      // 8.2.2. Set element's popover close watcher to null.
-      popoverData->DestroyCloseWatcher();
     }
-    // 8.3. Decrement document's hiding popover nesting count.
+    // 8.2. Decrement document's hiding popover nesting count.
     DecrementHidingPopoverNestingCount();
   });
 
@@ -16982,10 +16987,10 @@ void Document::HidePopover(Element& aPopover, bool aFocusPreviousElement,
     }
 
     // 11.4. Set validityResult to the result of running check popover validity
-    // given element, true, and null.
+    // given element, true, and document.
     // 11.5. If validityResult is not true:
     if (!popoverHTMLEl->CheckPopoverValidity(PopoverVisibilityState::Showing,
-                                             nullptr, aRv)) {
+                                             this, aRv)) {
       // 11.5.1. Run cleanupSteps.
       // 11.5.2. If throwExceptions is true and validityResult is a
       // DOMException, then throw validityResult.
@@ -17005,9 +17010,10 @@ void Document::HidePopover(Element& aPopover, bool aFocusPreviousElement,
                                    aSource);
 
     // 12.2. Set validityResult to the result of running check popover validity
-    // given element, true, and null. If not true, run cleanupSteps and return.
+    // given element, true, and document. If not true, run cleanupSteps and
+    // return.
     if (!popoverHTMLEl->CheckPopoverValidity(PopoverVisibilityState::Showing,
-                                             nullptr, aRv)) {
+                                             this, aRv)) {
       // (Runs cleanup steps from step 8).
       return;
     }
@@ -17021,6 +17027,7 @@ void Document::HidePopover(Element& aPopover, bool aFocusPreviousElement,
 
   // 13. Otherwise, remove an element from the top layer immediately given
   // element.
+  MOZ_DIAGNOSTIC_ASSERT(popoverHTMLEl->OwnerDoc() == this);
   RemovePopoverFromTopLayer(aPopover);
 
   if (PopoverData* popoverData = popoverHTMLEl->GetPopoverData()) {
@@ -17067,7 +17074,14 @@ void Document::HidePopover(Element& aPopover, bool aFocusPreviousElement,
     popoverHTMLEl->ForgetPreviouslyFocusedElementAfterHidingPopover();
   }
 
-  // 21. Run cleanupSteps.
+  // 21. If element's popover close watcher is not null, then:
+  // 21.1. Destroy element's popover close watcher.
+  // 21.2. Set element's popover close watcher to null.
+  if (PopoverData* popoverData = popoverHTMLEl->GetPopoverData()) {
+    popoverData->DestroyCloseWatcher();
+  }
+
+  // 22. Run cleanupSteps.
 }
 
 nsTArray<RefPtr<Element>> Document::PopoverListOf(
@@ -17881,6 +17895,8 @@ void Document::Reveal() {
 
   // Step 2
   mHasBeenRevealed = true;
+  const bool restoredFromBFCache = mRevealAfterBFCacheRestore;
+  mRevealAfterBFCacheRestore = false;
 
   UpdateOutboundViewTransitionOptIn();
 
@@ -17890,6 +17906,13 @@ void Document::Reveal() {
 
   RefPtr<nsGlobalWindowInner> win = nsGlobalWindowInner::Cast(GetInnerWindow());
   if (!win) {
+    if (nsPresContext* pc = GetPresContext()) {
+      if (restoredFromBFCache) {
+        pc->SendReadyToReplaceRetainedPaint();
+      } else {
+        pc->FlushDeferredReadyToReplaceRetainedPaint();
+      }
+    }
     return;
   }
 
@@ -17909,6 +17932,10 @@ void Document::Reveal() {
           TakeCrossDocViewTransitionParams(bc->BrowserId());
     }
   }
+
+  // The parent can still paint the previous document, see
+  // ReadyToReplaceRetainedPaint.
+  const bool tookParams = !!mInboundViewTransitionParams;
 
   // Use only params that a same-origin document captured, since cross-site
   // documents can share a content process.
@@ -17932,6 +17959,16 @@ void Document::Reveal() {
       PageRevealEvent::Constructor(win, u"pagereveal"_ns, init);
   event->SetTrusted(true);
   win->DispatchEvent(*event);
+
+  if (nsPresContext* pc = GetPresContext();
+      pc && (tookParams || restoredFromBFCache ||
+             pc->IsReadyToReplaceRetainedPaintDeferred())) {
+    if (vt.isSome()) {
+      pc->SendReadyToReplaceRetainedPaintAfterNextComposite();
+    } else {
+      pc->SendReadyToReplaceRetainedPaint();
+    }
+  }
 
   // Step 5, If transition is not null, then: Activate transition.
   if (vt.isSome()) {
@@ -20199,6 +20236,15 @@ UniquePtr<ViewTransitionParams> Document::TakeCrossDocViewTransitionParams(
   return extracted ? std::move(*extracted) : nullptr;
 }
 
+bool Document::HasPendingInboundCrossDocumentViewTransition() {
+  if (mHasBeenRevealed || !sCrossDocVTParams ||
+      !StaticPrefs::dom_viewTransitions_cross_document_enabled()) {
+    return false;
+  }
+  BrowsingContext* bc = GetBrowsingContext();
+  return bc && bc->IsTop() && sCrossDocVTParams->Contains(bc->BrowserId());
+}
+
 void Document::ClearCrossDocViewTransitionParams(
     uint64_t aBrowserId, Maybe<uint64_t> aProducerBrowsingContextId) {
   if (!sCrossDocVTParams) {
@@ -20362,6 +20408,7 @@ void Document::StopRenderBlocking() {
     // was actually blocked.
     StartLayoutAfterUnblocking();
   }
+  mRenderBlockedSink = nullptr;
 }
 
 // https://html.spec.whatwg.org/#process-internal-resource-links
@@ -20455,10 +20502,12 @@ void Document::StartLayoutAfterUnblocking() {
   MaybeScheduleRendering();
 
   // Start layout if it was deferred while blocked. After parsing ends the
-  // parser is gone, but EndLoad keeps a weak reference to the sink for this.
+  // parser is gone, but EndLoad keeps the sink alive for this.
   nsCOMPtr<nsIContentSink> sink;
   if (mParser) {
     sink = mParser->GetContentSink();
+  } else if (mRenderBlockedSink) {
+    sink = mRenderBlockedSink.forget();
   } else {
     sink = do_QueryReferent(mWeakSink);
   }
@@ -22046,7 +22095,8 @@ already_AddRefed<Document> Document::ParseHTMLUnsafe(
   aError = nsContentUtils::ParseDocumentHTML(
       *compliantString, doc,
       /* aScriptingEnabledForNoscriptParsing */ false,
-      sanitizeWhileParsing ? sanitizer.get() : nullptr, /* aSafe */ false);
+      sanitizeWhileParsing ? sanitizer.get() : nullptr,
+      nsContentUtils::SanitizerMode::Unsafe);
   if (aError.Failed()) {
     return nullptr;
   }
@@ -22096,7 +22146,8 @@ already_AddRefed<Document> Document::ParseHTML(GlobalObject& aGlobal,
   // <noscript> content is parsed as markup.
   aError = nsContentUtils::ParseDocumentHTML(
       aHTML, doc, /* aScriptingEnabledForNoscriptParsing */ false,
-      sanitizeWhileParsing ? sanitizer.get() : nullptr, /* aSafe */ true);
+      sanitizeWhileParsing ? sanitizer.get() : nullptr,
+      nsContentUtils::SanitizerMode::Safe);
   if (aError.Failed()) {
     return nullptr;
   }

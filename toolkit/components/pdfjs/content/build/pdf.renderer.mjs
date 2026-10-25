@@ -20,8 +20,8 @@
  */
 
 /**
- * pdfjsVersion = 6.5.260
- * pdfjsBuild = 33734f1fd
+ * pdfjsVersion = 6.5.334
+ * pdfjsBuild = 67667f1e4
  */
 
 ;// ./src/shared/util.js
@@ -538,6 +538,11 @@ class Util {
   static makeHexColor(r, g, b) {
     return `#${this.hexNums[r]}${this.hexNums[g]}${this.hexNums[b]}`;
   }
+  static get identity0to256Map() {
+    return shadow(this, "identity0to256Map", Uint8Array.from({
+      length: 256
+    }, (_, i) => i));
+  }
   static transform(m1, m2) {
     return [m1[0] * m2[0] + m1[2] * m2[1], m1[1] * m2[0] + m1[3] * m2[1], m1[0] * m2[2] + m1[2] * m2[3], m1[1] * m2[2] + m1[3] * m2[3], m1[0] * m2[4] + m1[2] * m2[5] + m1[4], m1[1] * m2[4] + m1[3] * m2[5] + m1[5]];
   }
@@ -604,10 +609,10 @@ class Util {
       b1 += m1r2;
       b2 += m1r2;
     }
-    output[0] = Math.min(output[0], a0, a1, a2, a3);
-    output[1] = Math.min(output[1], b0, b1, b2, b3);
-    output[2] = Math.max(output[2], a0, a1, a2, a3);
-    output[3] = Math.max(output[3], b0, b1, b2, b3);
+    output[0] = Math.min(output[0], a0, a1, Math.min(a2, a3));
+    output[1] = Math.min(output[1], b0, b1, Math.min(b2, b3));
+    output[2] = Math.max(output[2], a0, a1, Math.max(a2, a3));
+    output[3] = Math.max(output[3], b0, b1, Math.max(b2, b3));
   }
   static inverseTransform(m) {
     const d = m[0] * m[3] - m[1] * m[2];
@@ -2623,6 +2628,7 @@ class TilingPattern {
         owner.ctx.drawImage(tmpCanvas.canvas, x0, y0, bboxWidth, bboxHeight);
         owner.canvasFactory.destroy(tmpCanvas);
       } else {
+        owner.resetGraphicsState();
         this.setFillAndStrokeStyleToContext(owner, this.paintType, this.color);
         this.clipBbox(owner, x0, y0, x1, y1);
         owner.baseTransformStack.push(owner.baseTransform);
@@ -3046,15 +3052,8 @@ class TransferMapsFallback {
   #maps;
   constructor(maps) {
     const [mapR, mapG = mapR, mapB = mapR] = maps;
-    const {
-      identityMap
-    } = TransferMapsFallback;
+    const identityMap = Util.identity0to256Map.slice();
     this.#maps = [mapR || identityMap, mapG || identityMap, mapB || identityMap];
-  }
-  static get identityMap() {
-    return shadow(this, "identityMap", Uint8Array.from({
-      length: 256
-    }, (_, i) => i));
   }
   applyToColor(color) {
     if (typeof color !== "string" || !color.startsWith("#")) {
@@ -4047,6 +4046,27 @@ class CanvasGraphics {
     this.pendingClip = null;
     this._cachedScaleForStroking[0] = -1;
   }
+  resetGraphicsState() {
+    const {
+      clipBox,
+      transferMaps,
+      transferMapsFallback
+    } = this.current;
+    const current = this.current = new CanvasExtraState(0, 0);
+    current.clipBox = clipBox;
+    current.transferMaps = transferMaps;
+    current.transferMapsFallback = transferMapsFallback;
+    const ctx = this.ctx;
+    ctx.lineWidth = 1;
+    ctx.lineCap = "butt";
+    ctx.lineJoin = "miter";
+    ctx.miterLimit = 10;
+    if (ctx.setLineDash !== undefined) {
+      ctx.setLineDash([]);
+      ctx.lineDashOffset = 0;
+    }
+    this._cachedScaleForStroking[0] = -1;
+  }
   transform(opIdx, a, b, c, d, e, f) {
     this.dependencyTracker?.recordIncrementalData("transform", opIdx);
     this.ctx.transform(a, b, c, d, e, f);
@@ -4132,8 +4152,14 @@ class CanvasGraphics {
       const dims = this.current.tilingPatternDims;
       const tileIdx = dims && fillColor.canSkipPatternCanvas(dims);
       if (tileIdx) {
-        fillColor.drawPattern(this, path, this.pendingEOFill, tileIdx, opIdx);
+        const {
+          pendingClip,
+          pendingEOFill
+        } = this;
+        this.pendingClip = null;
         this.pendingEOFill = false;
+        fillColor.drawPattern(this, path, pendingEOFill, tileIdx, opIdx);
+        this.pendingClip = pendingClip;
         if (consumePath) {
           this.consumePath(opIdx, path, intersect);
         }
@@ -4600,9 +4626,9 @@ class CanvasGraphics {
     const textHScale = current.textHScale * fontDirection;
     const fontMatrix = current.fontMatrix || FONT_IDENTITY_MATRIX;
     const glyphsLength = glyphs.length;
-    const isTextInvisible = current.textRenderingMode === TextRenderingMode.INVISIBLE;
+    const isTextVisible = current.textRenderingMode !== TextRenderingMode.INVISIBLE;
     let i, glyph, width, spacingLength;
-    if (isTextInvisible || fontSize === 0) {
+    if (fontSize === 0) {
       return;
     }
     this._cachedScaleForStroking[0] = -1;
@@ -4627,20 +4653,14 @@ class CanvasGraphics {
         const operatorList = font.charProcOperatorList.get(glyph.operatorListId);
         if (!operatorList) {
           warn(`Type3 character "${glyph.operatorListId}" is not available.`);
-        } else if (this.contentVisible) {
+        } else if (this.contentVisible && isTextVisible) {
           this.save();
-          if (operatorList.fnArray[0] === OPS.setCharWidth) {
-            current.fillAlpha = current.strokeAlpha = 1;
-            ctx.globalAlpha = 1;
-          }
           ctx.scale(fontSize, fontSize);
           ctx.transform(...fontMatrix);
           this.executeOperatorList(operatorList);
           this.restore();
         }
-        const p = [glyph.width, 0];
-        Util.applyTransform(p, fontMatrix);
-        width = p[0] * fontSize + spacing;
+        width = glyph.width * fontMatrix[0] * fontSize + spacing * fontDirection;
         ctx.translate(width, 0);
         current.x += width * textHScale;
       }
@@ -7529,7 +7549,7 @@ class RendererMessageHandler {
     this.#connection = null;
   }
   static #sendReady(handler) {
-    const workerVersion = "6.5.260";
+    const workerVersion = "6.5.334";
     const testObj = new Uint8Array();
     handler.send("ready", {
       testObj,

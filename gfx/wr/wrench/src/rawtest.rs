@@ -54,6 +54,8 @@ impl<'a> RawtestHarness<'a> {
         self.test_pipeline_readded_after_removal();
         self.test_removed_pipeline_in_rootless_document();
         self.test_pipeline_moved_to_rootless_document();
+        self.test_backdrop_filter_hidden_after_visible();
+        self.test_offscreen_snapshot_in_rootless_document();
     }
 
     #[allow(dead_code)]
@@ -1764,5 +1766,105 @@ impl<'a> RawtestHarness<'a> {
         self.wrench.api.send_transaction(self.wrench.document_id, txn);
         self.rx.recv().unwrap();
         self.wrench.render();
+    }
+
+    // A backdrop-filter chain picture that becomes invisible keeps the
+    // `raster_config` of the last frame it was drawn in.
+    fn test_backdrop_filter_hidden_after_visible(&mut self) {
+        println!("\tbackdrop-filter hidden after visible test...");
+
+        let opacity_key = PropertyBindingKey::new(0xbacd);
+        let rect = LayoutRect::from_size(LayoutSize::new(256.0, 256.0));
+        let root_pipeline_id = self.wrench.root_pipeline_id;
+
+        let mut builder = DisplayListBuilder::new(root_pipeline_id);
+        builder.begin(AU_PER_DEV_PX);
+        let info = self.make_common_properties(rect);
+        builder.push_rect(&info, rect, ColorF::new(1.0, 0.0, 0.0, 1.0));
+        builder.push_backdrop_filter(
+            &info,
+            &[
+                FilterOp::Sepia(0.5),
+                FilterOp::Opacity(PropertyBinding::Binding(opacity_key, 1.0), 1.0),
+            ],
+            &[],
+        );
+
+        let mut epoch = Epoch(0);
+        let mut txn = Transaction::new();
+        txn.append_dynamic_properties(DynamicProperties {
+            transforms: vec![],
+            floats: vec![PropertyValue { key: opacity_key, value: 1.0 }],
+            colors: vec![],
+        });
+        self.submit_dl(&mut epoch, builder, txn);
+        self.rx.recv().unwrap();
+        self.wrench.render();
+
+        let mut txn = Transaction::new();
+        txn.reset_dynamic_properties();
+        txn.append_dynamic_properties(DynamicProperties {
+            transforms: vec![],
+            floats: vec![PropertyValue { key: opacity_key, value: 0.0 }],
+            colors: vec![],
+        });
+        txn.generate_frame(0, true, false, RenderReasons::TESTING);
+        self.wrench.api.send_transaction(self.wrench.document_id, txn);
+        self.rx.recv().unwrap();
+        self.wrench.render();
+    }
+
+    // A view transition capture sent before the document's root pipeline has a
+    // display list, as after a GPU process restart: the transaction builds an
+    // offscreen scene but no main scene, so the render backend holds its
+    // interning ops while frame-building the offscreen scene.
+    fn test_offscreen_snapshot_in_rootless_document(&mut self) {
+        println!("\toffscreen snapshot in rootless document test...");
+
+        let doc_id = self.wrench.api.add_document(DeviceIntSize::new(100, 100));
+        let pipeline_id = PipelineId(1, 47);
+        let rect = LayoutRect::from_size(LayoutSize::new(100.0, 100.0));
+        let snapshot_key = SnapshotImageKey(self.wrench.api.generate_image_key());
+
+        let mut builder = DisplayListBuilder::new(pipeline_id);
+        builder.begin(AU_PER_DEV_PX);
+        let space_and_clip = SpaceAndClipInfo::root_scroll(pipeline_id);
+        builder.push_stacking_context(
+            space_and_clip.spatial_id,
+            PrimitiveFlags::default(),
+            None,
+            TransformStyle::Flat,
+            MixBlendMode::Normal,
+            &[],
+            &[],
+            RasterSpace::Screen,
+            StackingContextFlags::empty(),
+            Some(SnapshotInfo { key: snapshot_key, area: rect, detached: false }),
+        );
+        let info = self.make_common_properties_with_clip_and_spatial(
+            rect,
+            space_and_clip.clip_chain_id,
+            space_and_clip.spatial_id,
+        );
+        builder.push_rect(&info, rect, ColorF::new(0.0, 1.0, 0.0, 1.0));
+        builder.pop_stacking_context();
+
+        let mut txn = Transaction::new();
+        txn.add_snapshot_image(snapshot_key);
+        txn.set_display_list(
+            Epoch(0),
+            self.wrench.api.get_namespace_id(),
+            builder.end(),
+        );
+        txn.render_offscreen(pipeline_id);
+        txn.remove_pipeline(pipeline_id);
+        self.wrench.api.send_transaction(doc_id, txn);
+        self.rx.recv().unwrap();
+        self.wrench.render();
+
+        let mut txn = Transaction::new();
+        txn.delete_snapshot_image(snapshot_key);
+        self.wrench.api.send_transaction(doc_id, txn);
+        self.wrench.api.delete_document(doc_id);
     }
 }

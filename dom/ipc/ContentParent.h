@@ -1071,6 +1071,13 @@ class ContentParent final : public PContentParent,
       StructuredCloneData* aStack = nullptr);
 
  public:
+  /**
+   * Returns the canonical browsing context for `aContext` if it's managed by
+   * this ContentParent and is current, otherwise null.
+   */
+  CanonicalBrowsingContext* GetBrowsingContextIfCurrent(
+      const MaybeDiscardedWindowContext& aContext);
+
   mozilla::ipc::IPCResult RecvCommitBrowsingContextTransaction(
       const MaybeDiscarded<BrowsingContext>& aContext,
       BrowsingContext::BaseTransaction&& aTransaction, uint64_t aEpoch);
@@ -1078,9 +1085,6 @@ class ContentParent final : public PContentParent,
   mozilla::ipc::IPCResult RecvCommitWindowContextTransaction(
       const MaybeDiscarded<WindowContext>& aContext,
       WindowContext::BaseTransaction&& aTransaction, uint64_t aEpoch);
-
-  mozilla::ipc::IPCResult RecvAddSecurityState(
-      const MaybeDiscarded<WindowContext>& aContext, uint32_t aStateFlags);
 
   mozilla::ipc::IPCResult RecvFirstIdle();
 
@@ -1353,13 +1357,14 @@ class ContentParent final : public PContentParent,
       const MaybeDiscarded<BrowsingContext>& aContext);
 
   mozilla::ipc::IPCResult RecvSetActiveSessionHistoryEntry(
-      const MaybeDiscarded<BrowsingContext>& aContext,
+      const MaybeDiscarded<WindowContext>& aContext,
       const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo&& aInfo,
-      uint32_t aLoadType, uint32_t aUpdatedCacheKey, const nsID& aChangeID);
+      uint32_t aLoadType, uint32_t aUpdatedCacheKey, const nsID& aChangeID,
+      const Maybe<NewSessionHistorySharedState>& aNewSharedState);
 
   mozilla::ipc::IPCResult RecvReplaceActiveSessionHistoryEntry(
-      const MaybeDiscarded<BrowsingContext>& aContext,
-      SessionHistoryInfo&& aInfo);
+      const MaybeDiscarded<WindowContext>& aContext, SessionHistoryInfo&& aInfo,
+      const Maybe<NewSessionHistorySharedState>& aNewSharedState);
 
   mozilla::ipc::IPCResult RecvRemoveDynEntriesFromActiveSessionHistoryEntry(
       const MaybeDiscarded<BrowsingContext>& aContext);
